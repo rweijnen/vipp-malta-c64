@@ -1,0 +1,8 @@
+# downloaded toolchain (see README: 64tass 1.60, VICE 3.9)
+tools/64tass/
+tools/vice/
+tools/dl_64tass/
+tools/dl_vice/
+# build output
+build/
+__pycache__/
