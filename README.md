@@ -6,7 +6,7 @@ A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultim
 - a hires **"10"** for the 10-year anniversary (sprite 0), bouncing off the screen edges on its own path
 - **the attack:** when the "10" bumps into the logo, both freeze (the logo trembles) and the "10" recoils back the way it came, just clear of the logo. A laser gun slides in and shoots it three times. The beam is cut exactly at the "10". The "10" then shatters in a multicolor fire explosion: the screen flashes, the logo shakes and glows in the fire colours. Afterwards everything resumes.
 - laser and explosion **sound effects** on SID voice 3, which is borrowed from the music's drums the way games did it
-- a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members
+- a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members, with a rippling **water reflection** below it (flipped, half height, orange fading into purple)
 - music: *Commando* by Rob Hubbard (from HVSC)
 
 ## Run it
@@ -38,11 +38,14 @@ Test builds (64tass `-D`):
 | Logo shading / colours | `tools\art.py` (`shade`, `logo_roles`), colours in `tools\gen_assets.py` |
 | The "10", explosion, gun | `art.hires_ten`, `art.fire_frames` / `FIRE_COLOURS`, `tools\gun.py` |
 | Font glyphs / gradient | `tools\font7.py`, `GOLD` in `tools\art.py` |
+| Reflection style | `REFL_STYLE` in `tools\gen_assets.py`, styles in `art.REFL_STYLES` (`preview_art.py reflection` shows them) |
 | Motion | `Y_MIN`/`Y_MAX`/`Y_LEN`, `X_MIN`/`X_MAX` in `tools\gen_assets.py`, `X_SPEED` in `src\main.asm` |
 | Attack timing, shots, recoil | `ATK_*`, `SHOT_LEN`, `SHOTS`, `RECOIL_MIN`, `COOL_FRAMES` in `src\main.asm` |
 | Sound effects | `sfx_hi` / `sfx_ctrl` tables and `sfx_*v` per effect in `src\main.asm` |
 
 `tools\preview_art.py` and `tools\preview_ten.py` render option sheets without touching the demo.
+
+Everything we learned (limits, timings, techniques, bugs, how to test) is in [`docs/C64_DEMO_NOTES.md`](docs/C64_DEMO_NOTES.md).
 
 ## How it works
 
@@ -55,7 +58,10 @@ Test builds (64tass `-D`):
     - drawing the laser beam
 - **Laser beam:** CIA 1 timer A is synced to the raster at start-up with a double IRQ (period 63 cycles = one PAL line). One timer read gives the exact cycle. Then "sleds" of `cmp #$c9` bytes wait with single-cycle precision, so the background colour switches on and off exactly at the "10". It also switches only where needed, which avoids the 8565 "grey dot" bug.
 - **Line 227–242:** the scroller. Because of the FLD, screen rows 3–4 appear here.
-- **Line 245:** music, effects, movement, scrolling and colours, all done in the border area.
+- **Line 243–250:** the reflection, which is screen row 5.
+  - The charset only holds the glyphs the texts use: 4 chars each for the 2×2 form plus 2 for the flipped, half-height reflection.
+  - From line 242, the bottom IRQ gives lines 244–250 their own fine scroll (±1 px wave) at the start of each line. That is the ripple.
+- **Line 251:** music, effects, movement, scrolling and colours, all done in the border area.
 - **Sound:** every SID write of the music player goes through a generated stub (`build\music.inc`). The stub writes to the SID straight away, except voice 3 while an effect plays, and keeps a copy so voice 3 can be handed back afterwards.
 
 `tools\vicemon.py` drives VICE through its remote monitor:

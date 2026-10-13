@@ -406,3 +406,46 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "v2c":
     v2b_previews()
 
 
+
+
+def reflection_previews():
+    from font7 import GLYPHS
+    from art import font_cell_bits, refl_cell_bits, GOLD, REFL_STYLES, PAL
+    text = "VIPP MALTA 2026 * ALEX COOPER"
+    gold = {0b01: GOLD["c1"], 0b10: GOLD["c2"]}
+    sheets = []
+    for style in ("warm", "water", "deep"):
+        st = REFL_STYLES[style]
+        frames = []
+        for phase in (0, 2, 5):
+            W = 8 * len(text) * 2 + 8
+            im = Image.new("RGB", (W, 16 + 8 + 4), PAL[0])
+            px = im.load()
+            for i, ch in enumerate(text):
+                cell = font_cell_bits(GLYPHS[ch], GOLD)
+                for y in range(16):
+                    for x in range(8):
+                        b = cell[y][x]
+                        if b:
+                            c = (GOLD["T"] if y < 8 else GOLD["B"]) if b == 3 else gold[b]
+                            for k in (0, 1):
+                                px[4 + (i * 8 + x) * 2 + k, 2 + y] = PAL[c]
+                rc = refl_cell_bits(GLYPHS[ch], style)
+                for y in range(8):
+                    shift = [0, 1, 1, 0, -1, -1, 0, 1][(y + phase) % 8] if y else 0
+                    for x in range(8):
+                        b = rc[y][x]
+                        if b:
+                            c = {0b01: GOLD["c1"], 0b10: GOLD["c2"], 0b11: st["cram"]}[b]
+                            for k in (0, 1):
+                                xx = 4 + (i * 8 + x) * 2 + k + shift
+                                if 0 <= xx < W:
+                                    px[xx, 2 + 16 + y] = PAL[c]
+            frames.append(im.resize((im.size[0] * 3, im.size[1] * 3), Image.NEAREST))
+        sheets.append(label(stack(frames, pad=6), f"reflection '{style}' (3 ripple frames)"))
+    stack(sheets).save(BUILD / "preview_reflection.png")
+    print("wrote build/preview_reflection.png")
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "reflection":
+    reflection_previews()

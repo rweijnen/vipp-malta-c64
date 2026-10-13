@@ -475,3 +475,37 @@ def fire_frames(ten, n=len(FIRE_COLOURS), seed=7):
                     heat[y][lx] = max(heat[y][lx], dh)
         frames.append(heat)
     return frames
+
+
+# --- water reflection of the 2x2 font ------------------------------------------
+# A reflection row is 8 lines: the 14 glyph lines flipped and squashed (every
+# other line, starting at the glyph's bottom). Colours come from the distance
+# to the water line, not from the original gradient: a style gives, per
+# reflection line, the bit pair to use and whether that line is thinned out
+# (checker dither) for the water look. Bits: '1' = %01 ($d022, yellow),
+# '2' = %10 ($d023, orange), 'C' = %11 (colour RAM of the reflection row).
+REFL_STYLES = {
+    "warm":  dict(lines=["1", "2", "2", "2C", "C", "C", "C", "C"], thin=[0, 0, 0, 0, 1, 0, 1, 1], cram=2),
+    "water": dict(lines=["2", "2C", "C", "C", "C", "C", "C", "C"], thin=[0, 0, 0, 1, 0, 1, 1, 1], cram=6),
+    "deep":  dict(lines=["2", "2", "2C", "C", "C", "C", "C", "C"], thin=[0, 0, 1, 0, 1, 0, 1, 1], cram=4),
+}
+REFL_BITS = {"1": 0b01, "2": 0b10, "C": 0b11}
+
+
+def refl_cell_bits(rows, style):
+    """7x7 glyph -> 8 lines x 8 logical px of multicolor bit pairs."""
+    st = REFL_STYLES[style]
+    cell = [[0] * 8 for _ in range(8)]
+    for r in range(8):
+        src = 13 - 2 * r                      # glyph line (0-13), bottom first
+        if src < 0:
+            continue
+        spec = st["lines"][r]
+        for x in range(7):
+            if rows[src // 2][x] != "#":
+                continue
+            if st["thin"][r] and (x + r) & 1:
+                continue
+            s = spec[(x + r) & 1] if len(spec) == 2 else spec
+            cell[r][x] = REFL_BITS[s]
+    return cell

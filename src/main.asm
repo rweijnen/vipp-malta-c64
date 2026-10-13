@@ -11,7 +11,8 @@
 ;     (screen flash, logo shake, the logo glows in the fire colours). The gun
 ;     borrows sprite 7 above or below the logo. The beam is cut exactly at
 ;     the 10 with a CIA timer synced to the raster.
-;   * 2x2 multicolor scroller (Ocean style gold) greeting all VIPP members
+;   * 2x2 multicolor scroller (Ocean style gold) greeting all VIPP members,
+;     with a rippling water reflection below it
 ;   * Music: Commando by Rob Hubbard (HVSC). Its SID writes go through
 ;     small stubs, so voice 3 (the drums) can be borrowed for the laser and
 ;     explosion sound effects, as games did
@@ -51,7 +52,7 @@ SPR_PTR0    = (SPRITES & $3fff) / 64
 EXPL_PTR0   = (EXPLOSION & $3fff) / 64
 GUN_PTR     = (GUN & $3fff) / 64
 
-BLANK       = 32 * 4            ; top-left quarter of the 2x2 space glyph
+BLANK       = 0                 ; glyph 0 is the space: chars 0-3 are blank
 
 TITLE_ROW   = 1                 ; title: screen rows 1-2, raster lines 59-74
 SCROLL_SPEED = 2                ; pixels per frame
@@ -107,7 +108,9 @@ EV_GUN_ON   = 4
 KERNEL_LINE = 72                ; IRQ that runs the FLD / multiplex loop
 FLD_END     = 225               ; last line of the loop, YSCROLL back to 3
 SCROLL_ROW  = 3                 ; screen rows 3-4, shown on lines 227-242
-IRQ_BOTTOM_LINE = 245           ; music, movement, scroller, colours
+REFL_ROW    = SCROLL_ROW + 2    ; the reflection: screen row 5, lines 243-250
+IRQ_BOTTOM_LINE = 242           ; ripple, then music, movement, scroller...
+RIPPLE_LINE = 244               ; first rippled line (243 is a badline)
 
 ; --- BASIC stub: 2026 SYS2061 -----------------------------------------------
             * = $0801
@@ -326,6 +329,10 @@ clear_screens
             lda #FONT_BOTTOM | 8
             sta $d800 + (TITLE_ROW + 1) * 40,x
             sta $d800 + (SCROLL_ROW + 1) * 40,x
+            lda #REFL_CRAM | 8  ; the reflection's own colour (%11 pixels)
+            sta $d800 + REFL_ROW * 40,x
+            lda #REFL_BLANK
+            sta SCR_A + REFL_ROW * 40,x
             dex
             bpl -
             rts
@@ -560,7 +567,7 @@ _up         lda ten_yf
 _done       rts
 
 ; ---------------------------------------------------------------------------
-; IRQ chain: kernel (line 72) -> bottom (line 245) -> kernel ...
+; IRQ chain: kernel (line 72) -> bottom (line 242) -> kernel ...
 ; ---------------------------------------------------------------------------
 irq_bottom
             pha
@@ -572,6 +579,22 @@ irq_bottom
             lda #5
             sta $d020
 .endif
+            ; water ripple: the reflection lines 244-250 get their own fine
+            ; scroll (+-1 px, from make_ripple), written at the start of each
+            ; line, before its visible part. $d016 is no colour register, so
+            ; no grey dots.
+            ldy #0
+            ldx #RIPPLE_LINE
+-           cpx $d012
+            bne -
+            lda ripple_d016,y
+            sta $d016
+            inx
+            iny
+            cpy #7
+            bne -
+-           cpx $d012           ; line 251: below the display
+            bne -
             lda #$d8            ; 40 columns, multicolor, no fine scroll
             sta $d016
 
@@ -586,6 +609,7 @@ irq_bottom
             jsr place_gun       ; after the VIPP sprite 7 registers are set
             jsr build_events
             jsr update_scroller
+            jsr make_ripple
 
             lda #KERNEL_LINE
             sta $d012
@@ -664,7 +688,9 @@ _fld        lda fld_d011,x
             sta $d011
             lda #D018_A
             sta $d018
-            lda bg_col
+            lda bg_col          ; background for the scroller: written at the
+-           cpx $d012           ; start of the next line (left border), so the
+            beq -               ; 8565 grey dot of the write is not seen
             sta $d021
             lda xscroll         ; 38 columns + fine scroll for the scroller
             ora #$10            ; multicolor text
@@ -763,6 +789,10 @@ set_sprite_y                    ; VIPP sprites 1-7 only, the 10 keeps its Y
 ; ---------------------------------------------------------------------------
 SROW1       = SCR_A + SCROLL_ROW * 40
 SROW2       = SCR_A + (SCROLL_ROW + 1) * 40
+SROW3       = SCR_A + REFL_ROW * 40         ; reflection
+
+; Glyph g: chars 4g..4g+3 (2x2), reflection chars REFL_BLANK + 2g, +1
+; (gen_assets.py, glyph 0 = space).
 
 update_scroller
             lda xscroll
@@ -778,6 +808,8 @@ update_scroller
             sta SROW1,x
             lda SROW2+1,x
             sta SROW2,x
+            lda SROW3+1,x
+            sta SROW3,x
             inx
             cpx #39
             bne -
@@ -801,6 +833,11 @@ _text       lda scrolltext      ; operand is the text pointer (self-modified)
             sta SROW1+39
             ora #2
             sta SROW2+39
+            lda cur_char
+            asl a
+            clc
+            adc #REFL_BLANK
+            sta SROW3+39
             lda #1
             sta half
             rts
@@ -811,9 +848,45 @@ _right      lda cur_char
             sta SROW1+39
             ora #2
             sta SROW2+39
+            lda cur_char
+            asl a
+            clc
+            adc #REFL_BLANK + 1
+            sta SROW3+39
             lda #0
             sta half
             rts
+
+; Ripple values for the next frame: line 244+i gets the scroller's fine
+; scroll plus a small wave (-1/0/+1), kept inside 0..7. The wave moves on
+; every second frame.
+make_ripple
+            inc ripple_tick
+            lda ripple_tick
+            lsr a
+            sta tmp_lo
+            ldy #0
+-           tya
+            clc
+            adc tmp_lo
+            and #7
+            tax
+            lda xscroll
+            clc
+            adc ripple_tab,x
+            bpl +
+            lda #0
++           cmp #8
+            bcc +
+            lda #7
++           ora #$10            ; multicolor, 38 columns
+            sta ripple_d016,y
+            iny
+            cpy #7
+            bne -
+            rts
+
+ripple_tab  .byte 0, 1, 1, 0, $ff, $ff, 0, 1
 
 ; A bright shine sweeping left to right over the letters, one colour per
 ; letter sprite column (each column is 24 pixels wide). Bars keep their colour.
@@ -1699,7 +1772,9 @@ x_hi        .byte 0
 msb         .byte 0
 xscroll     .byte 7
 half        .byte 0
-cur_char    .byte 32
+cur_char    .byte 0
+ripple_tick .byte 0
+ripple_d016 .fill 7, $10
 shine_phase .byte 0
 shine_tmp   .byte 0
 ten_x       .word 100
