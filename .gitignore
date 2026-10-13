@@ -6,3 +6,8 @@ tools/dl_vice/
 # build output
 build/
 __pycache__/
+
+# extracted Impossible Mission data (Epyx, private event use only): rebuilt from your own .d64
+assets/im/
+tools/exomizer/
+tools/dl_exomizer/

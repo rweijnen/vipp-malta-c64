@@ -9,3 +9,6 @@
 - A RAM shadow of the SID breaks music that writes a register twice per frame (gate off/on): use write-through stubs.
 - Verify sound changes by recording WAVs in VICE (no -warp: warp mutes sound) and comparing envelopes against the original.
 - Prefer targeted captures (break at the event, a few frames, memory dumps) over long screenshot runs.
+- Backslashes in heredocs/sed get eaten too ("\v", "\b", "\c" in Windows paths became control bytes): write any text with Windows paths via the Write/Edit tool, never through heredoc + Python string literals. Check with grep for control characters afterwards.
+- Python test scripts that print through "| tail" show nothing until the end: run with -u and without tail so a hang shows where it stopped.
+- Exomizer has no Windows binaries any more: tools/build-exomizer.bat builds 3.1.2 with MSVC (unistd.h shim; b2buf names the array after its argument).

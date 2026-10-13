@@ -8,6 +8,7 @@ A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultim
 - laser and explosion **sound effects** on SID voice 3, which is borrowed from the music's drums the way games did it
 - a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members, with a rippling **water reflection** below it (flipped, half height, orange fading into purple)
 - music: *Commando* by Rob Hubbard (from HVSC)
+- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 0 shows an original room with the agent.
 
 ## Run it
 
@@ -20,7 +21,12 @@ The machine must be in **PAL** mode. On an NTSC machine the demo shows a message
 
 `.\build.ps1` runs `tools\gen_assets.py`, assembles `src\main.asm` with 64tass and writes `build\vipp.prg` and `build\vipp.d64`.
 
-The toolchain lives in `tools\`: 64tass 1.60 and VICE 3.9. You also need Python 3 with Pillow.
+The toolchain lives in `tools\`: 64tass 1.60, VICE 3.9 and Exomizer 3.1.2. You also need Python 3 with Pillow.
+
+The program spans `$0801-$f77f`, so `build.ps1` packs `build\vipp_full.prg` with Exomizer (`sfx`) into one self-unpacking `build\vipp.prg`.
+
+- **Exomizer:** no Windows binaries are offered any more. Download the source (`https://bitbucket.org/magli143/exomizer/get/3.1.2.zip`), unpack it into `tools\dl_exomizer\`, and run `tools\build-exomizer.bat` (needs Visual Studio 2022 C++ tools).
+- **Impossible Mission data:** it is never in git (Epyx data, private event use only). Run the game from your own `impossible_mission.d64` in VICE and take a RAM dump of a room (`tools\vicedump.py`). Then run `python tools\im\extract.py RAMDUMP --room DIR` to fill `assets\im\`. The build stops with a clear message if anything is missing.
 
 Test builds (64tass `-D`):
 

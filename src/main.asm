@@ -139,27 +139,67 @@ pal_ok
             sta $dd0d
             lda $dc0d
             lda $dd0d
-
             lda #0
             sta $d01a           ; no VIC irqs yet
-            sta $d015           ; sprites off while building
-            sta $d020
-            sta $d021
-
+            sta $d015
             lda #$35            ; RAM everywhere except I/O
             sta $01
-            lda #0
-            sta IDLE_BYTE
-
             lda #<nmi           ; RESTORE key does nothing
             sta $fffa
             lda #>nmi
             sta $fffb
-            lda #<irq_bottom
-            sta $fffe
-            lda #>irq_bottom
-            sta $ffff
 
+            jsr sync_timer      ; CIA timer in lock step with the raster
+.if SYNC_TEST != 0
+            ; test: sync again with every possible start jitter; sync_point
+            ; must always run on the same raster cycle
+            ldy #0
+-           tya
+            jsr delay_a_small
+            jsr sync_timer
+            iny
+            cpy #8
+            bne -
+.endif
+            jsr demo_init
+            cli
+
+; Space switches between the demo and the VIPP Mission (mission.asm). The
+; IRQs only raise want_mode; the switch itself happens here, outside any IRQ.
+main_loop
+            lda want_mode
+            beq main_loop
+            lda #0
+            sta want_mode
+            jsr mission_run     ; returns when Space is pressed again
+            sei
+            jsr demo_init
+            cli
+            jmp main_loop
+
+; Set up (or restore after the mission) everything of the demo: screens,
+; sprites, effects back to idle, music from the start, the IRQ chain.
+; Called with interrupts off. The CIA timer sync stays valid (never stopped).
+demo_init
+            lda #0
+            sta $d01a
+            sta $d015
+            sta $d020
+            sta $d021
+            lda #$ff
+            sta $d019
+            lda #0
+            sta IDLE_BYTE
+            sta atk_state       ; the attack may have been running
+            sta expl_state
+            sta flash_left
+            sta shake_left
+            sta bg_col
+            sta ten_hit
+            sta sfx_len
+            sta x_count
+            lda #1
+            sta atk_armed
             lda $dd00           ; VIC bank 0
             ora #%00000011
             sta $dd00
@@ -179,23 +219,6 @@ pal_ok
             lda #D018_A
             sta $d018
 
-            jsr sync_timer      ; CIA timer in lock step with the raster
-.if SYNC_TEST != 0
-            ; test: sync again with every possible start jitter; sync_point
-            ; must always run on the same raster cycle
-            ldy #0
--           tya
-            jsr delay_a_small
-            jsr sync_timer
-            iny
-            cpy #8
-            bne -
-.endif
-            lda #<irq_bottom
-            sta $fffe
-            lda #>irq_bottom
-            sta $ffff
-
             ldx #24             ; the SID copy starts like a reset SID: the
             lda #0              ; player never writes some registers (filter)
 -           sta SID_SHADOW,x
@@ -204,14 +227,35 @@ pal_ok
             lda #SONG
             jsr SID_INIT
 
+            lda #<irq_bottom
+            sta $fffe
+            lda #>irq_bottom
+            sta $ffff
             lda #IRQ_BOTTOM_LINE
             sta $d012
             lda #1
             sta $d01a
             lda #$ff
             sta $d019
-            cli
-            jmp *
+            rts
+
+; Space key (keyboard row 7, column 4), only a new press counts: it must be
+; released before the next one switches again.
+check_space
+            lda #$7f
+            sta $dc00
+            lda $dc01
+            and #$10
+            bne _up
+            lda space_held
+            bne _done
+            lda #1
+            sta space_held
+            sta want_mode
+            rts
+_up         lda #0
+            sta space_held
+_done       rts
 
 nmi         rti
 
@@ -610,6 +654,7 @@ irq_bottom
             jsr build_events
             jsr update_scroller
             jsr make_ripple
+            jsr check_space
 
             lda #KERNEL_LINE
             sta $d012
@@ -1751,6 +1796,8 @@ shine       .fill 51, COL_LETTER           ; 64 entries: letter colour with a
 
 ; --- variables -----------------------------------------------------------------
 synced      .byte 0
+want_mode   .byte 0             ; set by an IRQ on a Space press
+space_held  .byte 0
 x_phase     .byte 0
 x_idx       .byte 0
 y_idx       .byte 0
@@ -1900,3 +1947,6 @@ bw4         sty $d021           ; w4: cycle 12 of line b+2
             ldy beam_ysave
             ldx $d012           ; the kernel continues on the current line
             rts
+
+; --- VIPP Mission (Impossible Mission mode) --------------------------------------
+            .include "mission.asm"
