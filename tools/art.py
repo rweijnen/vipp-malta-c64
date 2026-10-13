@@ -77,6 +77,11 @@ def shade(cov, light_rows=2, dither_rows=2, shadow=(1, 2), aa=True):
                 roles[y][x] = OUTLINE
             elif aa and cov[y][x] >= 0.2:
                 roles[y][x] = OUTLINE if (x + y) & 1 else BG
+    # no stray black pixels squeezed between two shapes (e.g. the bar gap)
+    for y in range(h):
+        for x in range(1, w - 1):
+            if roles[y][x] == BG and roles[y][x - 1] != BG and roles[y][x + 1] != BG:
+                roles[y][x] = OUTLINE
     return roles
 
 
@@ -132,17 +137,32 @@ LOGO_W, LOGO_H = 96, 63      # logical px
 BAR_W = 24                   # sprite columns 0-1 hold the bars, 2-7 the letters
 
 
-def logo_roles(slant):
-    """The shaded VIPP logo as roles (BG/OUTLINE/BODY/LIGHT) on the 96x63 grid.
-    Also returns, per sprite column, whether its BODY pixels are bar or letter."""
+def logo_roles(slant, cols=8, bar_cols=2, squeeze_bars=False):
+    """The shaded VIPP logo as roles (BG/OUTLINE/BODY/LIGHT) on a grid of
+    cols x 3 sprites (12 x 21 logical px each), bars in the first bar_cols
+    sprite columns. Also returns, per sprite column, 'bar' or 'letter'."""
+    LOGO_W, BAR_W = cols * 12, bar_cols * 12
     red, txt = logo_masks()
     tallest = max(red.size[1], txt.size[1])
     tc = fit_logical(txt, LOGO_W - BAR_W - 3, (LOGO_H - 4) * txt.size[1] // tallest, slant)
     th = len(tc)
     bh = round(th * red.size[1] / txt.size[1])
-    rc = fit_logical(red, BAR_W - 3, bh, slant)
+    if squeeze_bars:
+        # keep the bars at full height, narrow them until they fit the column
+        for f in [x / 20 for x in range(20, 4, -1)]:
+            narrow = red.resize((max(1, round(red.size[0] * f)), red.size[1]), Image.LANCZOS)
+            try:
+                rc = fit_logical(narrow, BAR_W - 3, bh, slant)
+            except ValueError:
+                continue
+            if len(rc) == bh:
+                break
+        else:
+            raise ValueError("bars do not fit even when narrowed")
+    else:
+        rc = fit_logical(red, BAR_W - 3, bh, slant)
     grid = [[BG] * LOGO_W for _ in range(LOGO_H)]
-    kind = [None] * (LOGO_W // 12)
+    kind = [None] * cols
 
     def place(roles, ox, oy, what):
         for y, row in enumerate(roles):
@@ -189,3 +209,33 @@ def font_cell_bits(rows, scheme):
                 raise ValueError(f"scheme uses {s} on line {ln}: wrong char half")
             cell[ln][x] = MC_BITS[s]
     return cell
+
+
+# --- hires "10" (one sprite) -------------------------------------------------
+def text_mask(font_file, text="10"):
+    f = ImageFont.truetype(f"C:/Windows/Fonts/{font_file}", 300)
+    im = Image.new("L", (800, 420), 0)
+    ImageDraw.Draw(im).text((20, 20), text, font=f, fill=255)
+    return im.crop(im.getbbox())
+
+
+def hires_ten(font_file, slant, w=24, h=21, pad=0):
+    """Fit '10' into a w x h hires grid (booleans), optionally slanted."""
+    m = text_mask(font_file)
+    best = None
+    for hh in range(h - 2 * pad, 6, -1):
+        big = m.resize((max(1, round(m.size[0] * hh / m.size[1])) * 8, hh * 8), Image.LANCZOS)
+        if slant:
+            big = skew(big, slant)
+        ww = -(-big.size[0] // 8)
+        if ww <= w - 2 * pad:
+            best = (big, ww, hh)
+            break
+    big, ww, hh = best
+    cov = coverage(big, ww, hh)
+    g = [[False] * w for _ in range(h)]
+    ox, oy = (w - ww) // 2, (h - hh) // 2
+    for y in range(hh):
+        for x in range(ww):
+            g[oy + y][ox + x] = cov[y][x] >= 0.45
+    return g

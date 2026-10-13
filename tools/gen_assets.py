@@ -1,7 +1,9 @@
 """Generate binary assets for the VIPP C64 demo.
 
 Outputs (in build/):
-  logo_sprites.bin  24 multicolor sprites (3 rows x 8 columns), 64 bytes each
+  logo_sprites.bin  24 sprite blocks: per row r, block r*8+s is sprite s.
+                    Sprites 1-7 carry the VIPP logo (3 rows x 7), block 0 the
+                    '10' (sprite 0: hires, Y-expanded), blocks 8 and 16 unused
   logo_preview.png  how the logo looks on the C64 (for eyeballing)
   font.bin          2x2 multicolor charset (256 chars, Ocean style gold)
   font_preview.png  the font as it will look in the scroller
@@ -22,14 +24,19 @@ from font7 import GLYPHS
 ASSETS = ROOT / "assets"
 BUILD = ROOT / "build"
 
-SPR_COLS, SPR_ROWS = 8, 3
+SPR_ROWS = 3
+VIPP_COLS = 7        # VIPP logo: sprites 1-7
+BAR_COLS = 2         # of which the first 2 columns hold the bars
 
 # Logo Y range (must match the FLD region in src/main.asm, lines 72..225).
 # Y_MAX is the "floor" the logo bounces on, just above the scroller.
 Y_MIN, Y_MAX = 82, 160
 Y_LEN = 160          # frames per bounce (3.2 s at 50 Hz)
 # Logo X range of the left edge (visible area is 24..343, logo is 192 px wide)
-X_MIN, X_MAX = 24, 343 - 192 + 1
+X_MIN, X_MAX = 24, 343 - VIPP_COLS * 24 + 1
+# The '10' (sprite 0, 24 x 42 on screen) bounces off these edges
+TEN_X_MIN, TEN_X_MAX = 24, 344 - 24
+TEN_Y_MIN, TEN_Y_MAX = 50, 251 - 42
 # The x table has 256 entries; main.asm steps through it with an 8.8 phase.
 
 SLANT = 0.22         # italic logo: screen px shifted right per line going up
@@ -49,38 +56,62 @@ def fail(msg):
     sys.exit(1)
 
 
+def sprite_bytes(pixel_at):
+    """64 bytes of one multicolor sprite; pixel_at(x, line) -> bit pair."""
+    out = bytearray()
+    for line in range(21):
+        for byte in range(3):
+            v = 0
+            for p in range(4):
+                v = (v << 2) | pixel_at(byte * 4 + p, line)
+            out.append(v)
+    return out + bytes(1)        # pad to 64 bytes
+
+
+def hires_sprite_bytes(grid):
+    """64 bytes of one hires sprite from a 21 x 24 grid of booleans."""
+    out = bytearray()
+    for row in grid:
+        for byte in range(3):
+            v = 0
+            for p in range(8):
+                v = (v << 1) | int(row[byte * 8 + p])
+            out.append(v)
+    return out + bytes(1)
+
+
 def convert_logo():
     if not (ASSETS / "vipp_logo.png").exists():
         fail(f"missing {ASSETS / 'vipp_logo.png'}")
     try:
-        roles, kind = art.logo_roles(SLANT)
-    except ValueError as e:
+        roles, kind = art.logo_roles(SLANT, cols=VIPP_COLS, bar_cols=BAR_COLS)
+        ten = art.hires_ten("impact.ttf", SLANT)
+    except (ValueError, OSError) as e:
         fail(str(e))
-    bars = kind.index("letter") if "letter" in kind else None
-    if bars is None or any(k != "bar" for k in kind[:bars]) or any(k != "letter" for k in kind[bars:]):
-        fail(f"expected bar columns followed by letter columns, got {kind}")
+    if kind != ["bar"] * BAR_COLS + ["letter"] * (VIPP_COLS - BAR_COLS):
+        fail(f"expected {BAR_COLS} bar columns followed by letter columns, got {kind}")
 
     data = bytearray()
     for row in range(SPR_ROWS):
-        for col in range(SPR_COLS):
-            for line in range(21):
-                for byte in range(3):
-                    v = 0
-                    for p in range(4):
-                        v = (v << 2) | SPRITE_BITS[roles[row * 21 + line][col * 12 + byte * 4 + p]]
-                    data.append(v)
-            data.append(0)  # pad to 64 bytes
+        for spr in range(8):
+            if spr == 0:
+                if row == 0:
+                    data += hires_sprite_bytes(ten)
+                else:
+                    data += bytes(64)
+            else:
+                col = spr - 1
+                data += sprite_bytes(lambda x, ln: SPRITE_BITS[roles[row * 21 + ln][col * 12 + x]])
     (BUILD / "logo_sprites.bin").write_bytes(data)
 
-    colours = [[None] * art.LOGO_W for _ in range(art.LOGO_H)]
+    w = VIPP_COLS * 12
+    colours = [[None] * w for _ in range(art.LOGO_H)]
     for y in range(art.LOGO_H):
-        for x in range(art.LOGO_W):
-            r = roles[y][x]
-            body = COL_BAR if x // 12 < bars else COL_LETTER
-            colours[y][x] = {BG: None, LIGHT: COL_LIGHT, OUTLINE: COL_OUTLINE, BODY: body}[r]
+        for x in range(w):
+            body = COL_BAR if x // 12 < BAR_COLS else COL_LETTER
+            colours[y][x] = {BG: None, LIGHT: COL_LIGHT, OUTLINE: COL_OUTLINE, BODY: body}[roles[y][x]]
     art.render(colours, None, scale=4).save(BUILD / "logo_preview.png")
-    print(f"logo: {bars} bar sprite columns, {len(data)} bytes")
-    return bars
+    print(f"logo: {VIPP_COLS} sprite columns ({BAR_COLS} bars) + 10, {len(data)} bytes")
 
 
 def screencode(ch):
@@ -128,7 +159,7 @@ def gen_font():
     print(f"font: {len(GLYPHS)} glyphs")
 
 
-def gen_tables(bar_sprites):
+def gen_tables():
     xs_lo, xs_hi = bytearray(), bytearray()
     for i in range(256):
         t = i / 256 * 2 * math.pi
@@ -146,7 +177,9 @@ def gen_tables(bar_sprites):
     g = art.GOLD
     (BUILD / "tables.inc").write_text(
         f"Y_LEN = {Y_LEN}\n"
-        f"BAR_SPRITES = {bar_sprites}\n"
+        f"BAR_COLS = {BAR_COLS}\nVIPP_COLS = {VIPP_COLS}\n"
+        f"TEN_X_MIN = {TEN_X_MIN}\nTEN_X_MAX = {TEN_X_MAX}\n"
+        f"TEN_Y_MIN = {TEN_Y_MIN}\nTEN_Y_MAX = {TEN_Y_MAX}\n"
         f"COL_LIGHT = {COL_LIGHT}\nCOL_OUTLINE = {COL_OUTLINE}\n"
         f"COL_BAR = {COL_BAR}\nCOL_LETTER = {COL_LETTER}\n"
         f"FONT_C1 = {g['c1']}\nFONT_C2 = {g['c2']}\n"
@@ -179,8 +212,8 @@ def gen_title():
 
 if __name__ == "__main__":
     BUILD.mkdir(exist_ok=True)
-    bars = convert_logo()
+    convert_logo()
     gen_font()
-    gen_tables(bars)
+    gen_tables()
     gen_scrolltext()
     gen_title()

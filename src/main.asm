@@ -1,8 +1,10 @@
 ; ---------------------------------------------------------------------------
 ; VIPP Malta 2026 - a small C64 demo (PAL)
 ;
-;   * Graffiti VIPP logo made of 24 multicolor sprites (3 rows x 8): sine
+;   * VIPP logo made of 21 multicolor sprites (sprites 1-7, 3 rows): sine
 ;     sweep left/right, gravity bounce up/down, colour shine across it
+;   * '10' for the 10 year anniversary (sprite 0, hires, 24x42), bouncing
+;     off the screen edges on its own, in front of everything
 ;   * 2x2 multicolor scroller (Ocean style gold) greeting all VIPP members
 ;   * Music: Commando by Rob Hubbard (HVSC)
 ;
@@ -20,7 +22,7 @@ CHARSET     = $2000             ; 2x2 multicolor font (build/font.bin)
 SCR_A       = $2800             ; screen: text + sprite ptrs for logo row 1
 SCR_B       = $2c00             ; sprite ptrs for logo row 2 (text unused)
 SCR_C       = $3000             ; sprite ptrs for logo row 3 (text unused)
-SPRITES     = $3400             ; 24 logo sprites ($3400-$39ff)
+SPRITES     = $3400             ; 24 sprite blocks ($3400-$39ff), see gen_assets
 IDLE_BYTE   = $3fff             ; VIC idle-state graphics (shown in FLD area)
 SID_LOAD    = $5000
 SID_INIT    = $5fb2
@@ -37,6 +39,7 @@ BLANK       = 32 * 4            ; top-left quarter of the 2x2 space glyph
 TITLE_ROW   = 1                 ; title: screen rows 1-2, raster lines 59-74
 SCROLL_SPEED = 2                ; pixels per frame
 X_SPEED     = $80               ; x sine phase step per frame (8.8): 512 frames
+TEN_YSPEED  = $c0               ; '10' moves 1 px/frame in X, 0.75 px/frame in Y
 
 ; Raster layout. Lines 72-225 are an FLD area: YSCROLL is kept ahead of the
 ; raster so no badline ever happens there. The CPU is never stalled for 40
@@ -197,7 +200,9 @@ draw_title
 
 ; ---------------------------------------------------------------------------
 setup_sprites
-            ldx #0
+            ; sprite pointers: the VIPP sprites 1-7 use blocks r*8+s for logo
+            ; row r on screen A/B/C, the '10' (sprite 0) block 0 on all three
+            ldx #1
 -           txa
             clc
             adc #SPR_PTR0
@@ -209,20 +214,27 @@ setup_sprites
             inx
             cpx #8
             bne -
-            lda #COL_LIGHT      ; %01 pixels: highlights
+            lda #SPR_PTR0
+            sta SCR_A + $3f8
+            sta SCR_B + $3f8
+            sta SCR_C + $3f8
+
+            lda #COL_LIGHT      ; %01 pixels: highlights (and the 10's body)
             sta $d025
             lda #COL_OUTLINE    ; %11 pixels: outline + drop shadow
             sta $d026
-            ldx #BAR_SPRITES - 1
+            jsr pulse_ten       ; colour of the (hires) 10
+            ldx #BAR_COLS
 -           lda #COL_BAR        ; %10 pixels: body, per sprite column
             sta $d027,x
             dex
-            bpl -
+            bne -
             jsr shine_logo      ; letter columns
-            lda #$ff
-            sta $d01c           ; all multicolor
-            lda #0
+            lda #%11111110      ; VIPP multicolor, the 10 hires
+            sta $d01c
+            lda #%00000001      ; the 10 is stretched vertically (24 x 42)
             sta $d017
+            lda #0
             sta $d01d
             sta $d01b           ; sprites in front of text
             jsr position_logo
@@ -230,8 +242,9 @@ setup_sprites
             sta $d015
             rts
 
-; Advance the motion and set X/Y of all 8 sprites for logo row 1. Also
-; computes the raster lines the FLD loop acts on for rows 2 and 3.
+; Advance the motion of both logos and set the X/Y registers: sprite 0 for
+; the '10', sprites 1-7 for row 1 of the VIPP logo. Also computes the raster
+; lines the FLD loop acts on for VIPP rows 2 and 3.
 next_position
             lda x_phase
             clc
@@ -245,6 +258,7 @@ next_position
             bne +
             ldx #0
 +           stx y_idx
+            jsr move_ten
             ; fall through
 
 position_logo
@@ -263,14 +277,23 @@ position_logo
             adc #12
             sta ev_line+3       ; y+42: last line of row 2 -> row 3 pointers
             sta ev_yval+2
+
+            lda ten_x           ; the 10
+            sta $d000
+            lda ten_y
+            sta $d001
+            lda ten_x+1         ; its X bit 8 ends up in bit 0 after 7 rors
+            lsr a
+            lda #0
+            ror a
+            sta msb
+
             ldx x_idx
             lda bounce_x,x
             sta x_lo
             lda bounce_xhi,x
             sta x_hi
-            lda #0
-            sta msb
-            ldy #0
+            ldy #2              ; sprites 1-7
 -           lda x_lo
             sta $d000,y
             lda cur_y
@@ -292,6 +315,60 @@ position_logo
             sta $d010
             rts
 
+; The 10 moves in a straight line and bounces off the screen edges. X in
+; whole pixels (16 bit), Y in 8.8 fixed point.
+move_ten
+            lda ten_dx
+            bmi _left
+            inc ten_x
+            bne +
+            inc ten_x+1
++           lda ten_x           ; reached the right edge?
+            cmp #<TEN_X_MAX
+            lda ten_x+1
+            sbc #>TEN_X_MAX
+            bcc _y
+            lda #$ff
+            sta ten_dx
+            bne _y              ; always
+_left       lda ten_x
+            bne +
+            dec ten_x+1
++           dec ten_x
+            lda ten_x           ; reached the left edge?
+            cmp #<TEN_X_MIN + 1
+            lda ten_x+1
+            sbc #>TEN_X_MIN + 1
+            bcs _y
+            lda #1
+            sta ten_dx
+_y          lda ten_dy
+            bmi _up
+            lda ten_yf
+            clc
+            adc #TEN_YSPEED
+            sta ten_yf
+            lda ten_y
+            adc #0
+            sta ten_y
+            cmp #TEN_Y_MAX
+            bcc _done
+            lda #$ff
+            sta ten_dy
+            rts
+_up         lda ten_yf
+            sec
+            sbc #TEN_YSPEED
+            sta ten_yf
+            lda ten_y
+            sbc #0
+            sta ten_y
+            cmp #TEN_Y_MIN + 1
+            bcs _done
+            lda #1
+            sta ten_dy
+_done       rts
+
 ; ---------------------------------------------------------------------------
 ; IRQ chain: kernel (line 72) -> bottom (line 245) -> kernel ...
 ; ---------------------------------------------------------------------------
@@ -312,6 +389,7 @@ irq_bottom
             jsr next_position
             jsr update_scroller
             jsr shine_logo
+            jsr pulse_ten
 
             lda #KERNEL_LINE
             sta $d012
@@ -401,8 +479,7 @@ fld_d011
             .byte $18 | ((n + 7) & 7)
             .next
 
-set_sprite_y
-            sta $d001
+set_sprite_y                    ; VIPP sprites 1-7 only, the 10 keeps its Y
             sta $d003
             sta $d005
             sta $d007
@@ -474,7 +551,7 @@ shine_logo
             lda shine_phase
             lsr a
             sta shine_tmp
-            ldx #BAR_SPRITES
+            ldx #1 + BAR_COLS
 -           lda shine_tmp
             and #63
             tay
@@ -488,6 +565,20 @@ shine_logo
             cpx #8
             bne -
             rts
+
+; The 10 is white and pulses through red every 2.5 seconds.
+pulse_ten
+            inc ten_phase
+            lda ten_phase
+            lsr a
+            and #63
+            tax
+            lda ten_pulse,x
+            sta $d027
+            rts
+
+ten_pulse   .fill 48, 1
+            .byte 15, 10, 10, 2, 2, 2, 2, 2, 2, 2, 10, 10, 15, 1, 1, 1
 
 shine       .fill 51, COL_LETTER           ; 64 entries: letter colour with a
             .byte $03,$03,$0d,$01,$01,$01,$0d,$03,$03 ; cyan/white glint
@@ -509,6 +600,12 @@ half        .byte 0
 cur_char    .byte 32
 shine_phase .byte 0
 shine_tmp   .byte 0
+ten_x       .word 100
+ten_y       .byte 60
+ten_yf      .byte 0
+ten_dx      .byte 1             ; +1 / -1 ($ff)
+ten_dy      .byte 1
+ten_phase   .byte 0
 
 ; --- generated data ------------------------------------------------------------
             .align 256

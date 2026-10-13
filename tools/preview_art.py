@@ -257,3 +257,152 @@ def scheme_previews():
 
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "schemes":
     scheme_previews()
+
+
+# --- v2: 6-wide VIPP logo + "10" ---------------------------------------------
+def ten_roles(font_file, slant, width=24, xexp=1):
+    """'10' for width/12 sprites side by side (width x 21 logical px), shown
+    Y-expanded (and X-expanded when xexp=2)."""
+    f = ImageFont.truetype(f"C:/Windows/Fonts/{font_file}", 300)
+    im = Image.new("L", (700, 400), 0)
+    ImageDraw.Draw(im).text((20, 20), "10", font=f, fill=255)
+    m = im.crop(im.getbbox())
+    # Y-expanded: 21 logical lines show as 42 screen lines, so the source
+    # aspect maps to 2 screen px per logical x and 2 lines per logical y
+    sw, sh = m.size
+    for h in range(21 - 3, 8, -1):
+        w_screen = sw * (h * 2) / sh + slant * h * 2
+        w = int(-(-w_screen // (2 * xexp)))
+        if w <= width - 3:
+            break
+    big = m.resize((max(1, round(sw * h * 2 / sh / xexp)) * 4, h * 2 * 4), Image.LANCZOS)
+    if slant:
+        from art import skew
+        big = skew(big, slant)
+    cov = coverage(big, w, h * 2)
+    cov = [cov[y] for y in range(0, h * 2, 2)]           # back to logical lines
+    roles = shade(cov, light_rows=1, dither_rows=1, shadow=(1, 1))
+    grid = [[BG] * width for _ in range(21)]
+    ox, oy = (width - 3 - w) // 2 + 1, (21 - 3 - h) // 2 + 1
+    for y, row in enumerate(roles):
+        for x, r in enumerate(row):
+            if r != BG:
+                grid[oy + y][ox + x] = r
+    return grid
+
+
+def _colour(roles, kind, ten_body=None):
+    def c(x, r):
+        if r == BG:
+            return None
+        if r == BODY:
+            return ten_body if ten_body is not None else (2 if kind[x // 12] == "bar" else 14)
+        return {OUTLINE: 6, LIGHT: 1}[r]
+    return [[c(x, r) for x, r in enumerate(row)] for row in roles]
+
+
+def _expand(grid, xexp, yexp=2):
+    return [[v for v in row for _ in range(xexp)] for row in grid for _ in range(yexp)]
+
+
+def _combo(vipp, ten, gap=6):
+    """VIPP (logical px) next to the 10 (already expanded to logical px)."""
+    w = len(vipp[0]) + gap + len(ten[0])
+    out = [[None] * w for _ in range(63)]
+    for y in range(63):
+        out[y][:len(vipp[0])] = vipp[y]
+    for y, row in enumerate(ten):
+        for x, v in enumerate(row):
+            if v is not None:
+                out[y + 10][len(vipp[0]) + gap + x] = v
+    return out
+
+
+def v2_previews():
+    from art import logo_roles
+    sheets = []
+    # A: 6 wide, thinner bars, 10 = 2 sprites Y-expanded
+    roles, kind = logo_roles(0.22, cols=6, bar_cols=1, squeeze_bars=True)
+    vipp_a = _colour(roles, kind)
+    ten_a = _expand(_colour(ten_roles("impact.ttf", 0.22), None, ten_body=7), 1)
+    sheets.append(label(render(_combo(vipp_a, ten_a), None, scale=4),
+                        "A: VIPP 6 sprites wide (thinner bars)  +  10 = 2 sprites, 48x42"))
+    # B: 7 wide, normal bars, 10 = 1 sprite X+Y-expanded
+    roles, kind = logo_roles(0.22, cols=7, bar_cols=2)
+    vipp_b = _colour(roles, kind)
+    ten_b = _expand(_colour(ten_roles("impact.ttf", 0.22, width=12, xexp=2), None, ten_body=7), 2)
+    sheets.append(label(render(_combo(vipp_b, ten_b), None, scale=4),
+                        "B: VIPP 7 sprites wide (normal bars)  +  10 = 1 sprite stretched, 48x42"))
+    # current v1 logo for reference
+    roles, kind = logo_roles(0.22)
+    sheets.append(label(render(_colour(roles, kind), None, scale=4), "v1 for reference: 8 sprites wide"))
+    # 10 colour options (design A)
+    for body, name in ((7, "yellow"), (8, "orange"), (10, "light red"), (1, "white")):
+        g = _expand(_colour(ten_roles("impact.ttf", 0.22), None, ten_body=body), 1)
+        sheets.append(label(render(g, None, scale=4), f"10 in {name}"))
+    stack(sheets).save(BUILD / "preview_v2.png")
+    print("wrote build/preview_v2.png")
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "v2":
+    v2_previews()
+
+
+def ten_hires(font_file, slant, outline=False):
+    """'10' as one hires sprite: 24 x 21 pixels, each shown 2x2 (X+Y-expanded).
+    Returns a 21 x 24 grid of booleans."""
+    f = ImageFont.truetype(f"C:/Windows/Fonts/{font_file}", 300)
+    im = Image.new("L", (700, 400), 0)
+    ImageDraw.Draw(im).text((20, 20), "10", font=f, fill=255)
+    m = im.crop(im.getbbox())
+    from art import skew
+    pad = 2 if outline else 1
+    for h in range(21 - 2 * pad, 8, -1):
+        big = m.resize((max(1, round(m.size[0] * h / m.size[1])) * 8, h * 8), Image.LANCZOS)
+        if slant:
+            big = skew(big, slant)
+        w = -(-big.size[0] // 8)
+        if w <= 24 - 2 * pad:
+            break
+    cov = coverage(big, w, h)
+    grid = [[False] * 24 for _ in range(21)]
+    ox, oy = (24 - w) // 2, (21 - h) // 2
+    for y in range(h):
+        for x in range(w):
+            if cov[y][x] >= 0.45:
+                grid[oy + y][ox + x] = True
+    if outline:   # hollow: keep a 1px outline, the inside stays transparent
+        solid = [row[:] for row in grid]
+        ins = lambda x, y: 0 <= x < 24 and 0 <= y < 21 and solid[y][x]
+        for y in range(21):
+            for x in range(24):
+                if solid[y][x] and all(ins(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                    grid[y][x] = False
+    return grid
+
+
+def v2b_previews():
+    from art import logo_roles
+    roles, kind = logo_roles(0.22, cols=7, bar_cols=2)
+    vipp = _colour(roles, kind)
+    sheets = []
+    for font_file, slant, outline, col, name in (
+            ("impact.ttf", 0.22, False, 7, "Impact italic, solid yellow"),
+            ("ariblk.ttf", 0.22, False, 7, "Arial Black italic, solid yellow"),
+            ("impact.ttf", 0.22, False, 1, "Impact italic, solid white"),
+            ("ariblk.ttf", 0.0, False, 7, "Arial Black upright, solid yellow")):
+        t = ten_hires(font_file, slant, outline)
+        # hires pixel = 1 screen px; expanded 2x2. Show in 'half logical' units:
+        # render() uses 2 screen px per cell, so a hires px expanded (2 px) = 1 cell
+        g = [[col if v else None for v in row] for row in t]
+        g2 = [row for row in g for _ in (0, 1)]
+        combo = _combo(vipp, g2)
+        sheets.append(label(render(combo, None, scale=4), f"C: VIPP 7 wide + hires 10 (1 sprite, 48x42): {name}"))
+    stack(sheets).save(BUILD / "preview_v2c.png")
+    print("wrote build/preview_v2c.png")
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "v2c":
+    v2b_previews()
+
+
