@@ -5,6 +5,11 @@ Outputs (in build/):
                     Sprites 1-7 carry the VIPP logo (3 rows x 7), block 0 the
                     '10' (sprite 0: hires, Y-expanded), blocks 8 and 16 unused
   logo_preview.png  how the logo looks on the C64 (for eyeballing)
+  explosion.bin     multicolor explosion frames for sprite 0 (64 bytes each)
+  fire_colours.bin  per explosion frame: $d025, $d026, $d027 (3 tables)
+  gun.bin           laser gun, 8 frames: [faces right, faces left] x
+                    [art low (gun above VIPP), art high (gun below VIPP)] x
+                    [idle, firing]
   font.bin          2x2 multicolor charset (256 chars, Ocean style gold)
   font_preview.png  the font as it will look in the scroller
   bounce_x.bin      256 x-positions (low bytes) of the logo's left edge
@@ -13,11 +18,16 @@ Outputs (in build/):
   tables.inc        constants for main.asm
   scrolltext.bin    screen-code scroll text, terminated with $FF
   title.bin         screen-code title shown in 2x2 chars at the top
+  music.inc         the Commando player rebuilt from the SID file with every
+                    SID write replaced by "jsr" to a stub that writes through
+                    to the SID (except voice 3 while a sound effect plays)
+                    and keeps a copy in SID_SHADOW
 """
 import math
 import sys
 
 import art
+import gun
 from art import BG, OUTLINE, BODY, LIGHT, ROOT
 from font7 import GLYPHS
 
@@ -49,6 +59,10 @@ COL_LETTER = 14      # %10 -> $d027+: body of the letter sprites (light blue)
 SPRITE_BITS = {BG: 0b00, LIGHT: 0b01, BODY: 0b10, OUTLINE: 0b11}
 
 TITLE = "* MALTA 2026 *"
+
+SID_FILE = ASSETS / "Commando.sid"
+SID_LOAD = 0x5000
+SID_STORES = 46             # expected number of SID store instructions
 
 
 def fail(msg):
@@ -114,6 +128,48 @@ def convert_logo():
     print(f"logo: {VIPP_COLS} sprite columns ({BAR_COLS} bars) + 10, {len(data)} bytes")
 
 
+HEAT_BITS = {0: 0b00, 3: 0b01, 2: 0b11, 1: 0b10}   # see art.FIRE_COLOURS
+GUN_BITS = {".": 0b00, "o": 0b11, "w": 0b01, "f": 0b01, "b": 0b10}
+
+
+def gen_explosion():
+    ten = art.hires_ten("impact.ttf", SLANT)
+    frames = art.fire_frames(ten)
+    data = bytearray()
+    for heat in frames:
+        data += sprite_bytes(lambda x, ln: HEAT_BITS[heat[ln][x]])
+    (BUILD / "explosion.bin").write_bytes(data)
+    cols = art.FIRE_COLOURS
+    (BUILD / "fire_colours.bin").write_bytes(
+        bytes(c[0] for c in cols) + bytes(c[1] for c in cols) + bytes(c[2] for c in cols))
+    print(f"explosion: {len(frames)} frames")
+    return len(frames)
+
+
+GUN_SHIFT_ABOVE = 6    # gun art moved down: muzzle near the bottom of the sprite
+GUN_SHIFT_BELOW = -4   # gun art moved up: muzzle near the top
+
+
+def gen_gun():
+    data = bytearray()
+    try:
+        frames = [gun.parse(gun.IDLE), gun.parse(gun.FIRE)]
+    except ValueError as e:
+        fail(f"gun sprite: {e}")
+    for mirror in (False, True):
+        for shift in (GUN_SHIFT_ABOVE, GUN_SHIFT_BELOW):
+            for rows in frames:
+                moved = ["." * 12] * 21
+                for y, r in enumerate(rows):
+                    ny = y + shift
+                    if r.strip(".") and not 0 <= ny < 21:
+                        fail(f"gun art row {y} moved outside the sprite (shift {shift})")
+                    if 0 <= ny < 21:
+                        moved[ny] = r[::-1] if mirror else r
+                data += sprite_bytes(lambda x, ln: GUN_BITS[moved[ln][x]])
+    (BUILD / "gun.bin").write_bytes(data)
+
+
 def screencode(ch):
     if ch not in GLYPHS:
         fail(f"character {ch!r} is not in the scroller font (tools/font7.py)")
@@ -159,7 +215,7 @@ def gen_font():
     print(f"font: {len(GLYPHS)} glyphs")
 
 
-def gen_tables():
+def gen_tables(expl_frames):
     xs_lo, xs_hi = bytearray(), bytearray()
     for i in range(256):
         t = i / 256 * 2 * math.pi
@@ -177,6 +233,9 @@ def gen_tables():
     g = art.GOLD
     (BUILD / "tables.inc").write_text(
         f"Y_LEN = {Y_LEN}\n"
+        f"EXPL_FRAMES = {expl_frames}\n"
+        f"GUN_MUZZLE_ABOVE = {gun.MUZZLE_ROW + GUN_SHIFT_ABOVE}\n"
+        f"GUN_MUZZLE_BELOW = {gun.MUZZLE_ROW + GUN_SHIFT_BELOW}\n"
         f"BAR_COLS = {BAR_COLS}\nVIPP_COLS = {VIPP_COLS}\n"
         f"TEN_X_MIN = {TEN_X_MIN}\nTEN_X_MAX = {TEN_X_MAX}\n"
         f"TEN_Y_MIN = {TEN_Y_MIN}\nTEN_Y_MAX = {TEN_Y_MAX}\n"
@@ -203,6 +262,74 @@ def gen_scrolltext():
     print(f"scrolltext: {len(names)} names, {len(data)} bytes")
 
 
+# store opcodes: value register, index register
+SID_STORE_OPS = {0x8d: ("a", ""), 0x9d: ("a", "x"), 0x99: ("a", "y"),
+                 0x8e: ("x", ""), 0x8c: ("y", "")}
+SID_READ_OPS = (0xad, 0xbd, 0xb9, 0xae, 0xac, 0xbe, 0xbc)
+
+
+def gen_music():
+    """Rebuild the player with each SID store (sta/stx/sty $d400-$d418, also
+    indexed) replaced by a 3 byte "jsr" to a generated stub. The stub keeps
+    every register, flag and the exact write order, so the music sounds as
+    before; only voice 3 is left alone while a sound effect plays."""
+    raw = SID_FILE.read_bytes()
+    if raw[:4] != b"PSID":
+        fail(f"{SID_FILE} is not a PSID file")
+    if raw[0x7c] | raw[0x7d] << 8 != SID_LOAD:
+        fail("unexpected load address in the SID file")
+    data = raw[0x7e:]
+    sites = []
+    for i in range(len(data) - 2):
+        if data[i + 2] == 0xd4 and data[i + 1] <= 0x18:
+            if data[i] in SID_READ_OPS:
+                fail(f"player reads SID register at ${SID_LOAD + i:04x}")
+            if data[i] in SID_STORE_OPS:
+                sites.append((i, data[i], data[i + 1]))
+    if len(sites) != SID_STORES:
+        fail(f"found {len(sites)} SID stores in the player, expected {SID_STORES}")
+
+    out = ["; generated by tools/gen_assets.py - do not edit", "",
+           "            * = SID_LOAD"]
+    pos = 0
+    for i, op, lo in sites:
+        if i > pos:
+            out.append(f'            .binary "../assets/Commando.sid", $7e + ${pos:x}, ${i - pos:x}')
+        out.append(f"            jsr sid_{op:02x}_{lo:02x}       ; was ${op:02x} ${lo:02x} $d4")
+        pos = i + 3
+    out.append(f'            .binary "../assets/Commando.sid", $7e + ${pos:x}')
+    out.append('            .cerror * != $5fc7, "unexpected Commando.sid size"')
+    out += ["", "; SID write stubs (called by the player)", "            * = SID_STUBS"]
+    for op, lo in sorted({(op, lo) for _, op, lo in sites}):
+        val, idx = SID_STORE_OPS[op]
+        ix = f",{idx}" if idx else ""
+        if idx:
+            t = [f"            t{idx}a", "            clc", f"            adc #${lo:02x}"]
+        else:
+            t = [f"            lda #${lo:02x}"]
+        out += [f"sid_{op:02x}_{lo:02x}",
+                "            php",
+                "            pha",
+                f"            st{val} sid_val",
+                "            lda sfx_len         ; a sound effect owns voice 3?",
+                "            beq _write",
+                *t,
+                "            cmp #14             ; register in $d40e-$d414?",
+                "            bcc _write",
+                "            cmp #21",
+                "            bcc _skip",
+                "_write      lda sid_val",
+                f"            sta $d4{lo:02x}{ix}",
+                "_skip       lda sid_val",
+                f"            sta SID_SHADOW + ${lo:02x}{ix}",
+                "            pla",
+                "            plp",
+                "            rts"]
+    out.append('            .cerror * > SID_SHADOW, "SID stubs overlap SID_SHADOW"')
+    (BUILD / "music.inc").write_text("\n".join(out) + "\n")
+    print(f"music: {len(sites)} SID writes go through stubs")
+
+
 def gen_title():
     data = bytes(screencode(c) for c in TITLE)
     if len(data) * 2 > 40:
@@ -213,7 +340,10 @@ def gen_title():
 if __name__ == "__main__":
     BUILD.mkdir(exist_ok=True)
     convert_logo()
+    expl = gen_explosion()
+    gen_gun()
     gen_font()
-    gen_tables()
+    gen_tables(expl)
     gen_scrolltext()
     gen_title()
+    gen_music()

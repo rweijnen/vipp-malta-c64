@@ -11,11 +11,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Pepto's C64 palette
-PAL = [(0x00, 0x00, 0x00), (0xFF, 0xFF, 0xFF), (0x68, 0x37, 0x2B), (0x70, 0xA4, 0xB2),
-       (0x6F, 0x3D, 0x86), (0x58, 0x8D, 0x43), (0x35, 0x28, 0x79), (0xB8, 0xC7, 0x6F),
-       (0x6F, 0x4F, 0x25), (0x43, 0x39, 0x00), (0x9A, 0x67, 0x59), (0x44, 0x44, 0x44),
-       (0x6C, 0x6C, 0x6C), (0x9A, 0xD2, 0x84), (0x6C, 0x5E, 0xB5), (0x95, 0x95, 0x95)]
+# Colodore palette (VICE's default, close to a real C64 / the Ultimate's HDMI)
+PAL = [(0x00, 0x00, 0x00), (0xFF, 0xFF, 0xFF), (0x81, 0x33, 0x38), (0x75, 0xCE, 0xC8),
+       (0x8E, 0x3C, 0x97), (0x56, 0xAC, 0x4D), (0x2E, 0x2C, 0x9B), (0xED, 0xF1, 0x71),
+       (0x8E, 0x50, 0x29), (0x55, 0x38, 0x00), (0xC4, 0x6C, 0x71), (0x4A, 0x4A, 0x4A),
+       (0x7B, 0x7B, 0x7B), (0xA9, 0xFF, 0x9F), (0x70, 0x6D, 0xEB), (0xB2, 0xB2, 0xB2)]
 
 # roles of a shaded pixel
 BG, OUTLINE, BODY, LIGHT = 0, 1, 2, 3
@@ -239,3 +239,239 @@ def hires_ten(font_file, slant, w=24, h=21, pad=0):
         for x in range(ww):
             g[oy + y][ox + x] = cov[y][x] >= 0.45
     return g
+
+
+# --- explosion animation for the hires '10' sprite ---------------------------
+EXPLOSION_COLOURS = [1, 1, 7, 7, 8, 10, 2, 9, 11, 11]
+
+
+def explosion_frames(n=len(EXPLOSION_COLOURS), seed=10):
+    """n hires frames (21 rows x 24 booleans) of a fireball that bursts out,
+    breaks up into debris and fades. Designed for a Y-expanded sprite, so a
+    pixel is 1 wide and 2 lines tall: distances use y * 2."""
+    import random
+    rnd = random.Random(seed)
+    cx, cy = 11.5, 10
+    # fixed jagged outline and debris so the frames animate coherently
+    spikes = [rnd.uniform(0.75, 1.25) for _ in range(16)]
+    debris = [(rnd.uniform(0, 2 * math.pi), rnd.uniform(0.6, 1.0)) for _ in range(22)]
+    frames = []
+    for k in range(n):
+        t = (k + 1) / n
+        radius = 3 + 11 * t ** 0.6           # in screen px (x) units
+        hole = max(0.0, (t - 0.45) / 0.55) * radius * 0.9   # burns out from the middle
+        g = [[False] * 24 for _ in range(21)]
+        for y in range(21):
+            for x in range(24):
+                dx, dy = x - cx, (y - cy) * 2
+                d = math.hypot(dx, dy)
+                a = math.atan2(dy, dx)
+                spike = spikes[int((a + math.pi) / (2 * math.pi) * 16) % 16]
+                edge = radius * spike
+                if hole < d <= edge:
+                    # break the fireball up as it cools
+                    density = 1.0 - 0.75 * max(0.0, t - 0.3) / 0.7
+                    if rnd.random() < density:
+                        g[y][x] = True
+        for ang, speed in debris:
+            if t < 0.25:
+                continue
+            r = radius * 1.15 * speed + 2
+            x = round(cx + math.cos(ang) * r)
+            y = round(cy + math.sin(ang) * r / 2)
+            if 0 <= x < 24 and 0 <= y < 21 and rnd.random() < 1.1 - t:
+                g[y][x] = True
+        frames.append(g)
+    return frames
+
+
+SHATTER_COLOURS = [1, 7, 1, 7, 8, 10, 8, 2, 9, 11, 11, 11]
+
+
+def shatter_frames(ten, n=len(SHATTER_COLOURS), seed=10):
+    """The '10' cracks, shatters into chunks that fly apart (with gravity)
+    while a fireball bursts out of the cracks. Hires 24 x 21 frames for a
+    Y-expanded sprite (a pixel is 1 wide, 2 lines tall)."""
+    import random
+    rnd = random.Random(seed)
+    H, W = len(ten), len(ten[0])
+    pts = [(x, y) for y in range(H) for x in range(W) if ten[y][x]]
+    cx = sum(x for x, _ in pts) / len(pts)
+    cy = sum(y for _, y in pts) / len(pts)
+    # chunks: a jittered grid of cells, each with its own velocity
+    cell_w, cell_h = 4, 3
+    chunks = {}
+    for x, y in pts:
+        key = ((x + (y // 5) % 2) // cell_w, (y + (x // 6) % 2) // cell_h)   # irregular cells
+        chunks.setdefault(key, []).append((x, y))
+    vel = {}
+    for key, cps in chunks.items():
+        mx = sum(p[0] for p in cps) / len(cps)
+        my = sum(p[1] for p in cps) / len(cps)
+        dx, dy = mx - cx, (my - cy) * 2
+        d = math.hypot(dx, dy) or 1
+        speed = rnd.uniform(1.6, 2.6)
+        vel[key] = (dx / d * speed + rnd.uniform(-0.4, 0.4),
+                    (dy / d * speed) / 2 + rnd.uniform(-0.3, 0.1))
+    spikes = [rnd.uniform(0.7, 1.3) for _ in range(12)]
+    frames = []
+    for k in range(n):
+        g = [[False] * W for _ in range(H)]
+        if k == 0:
+            # cracks: the cell borders open up, the digit is still in place
+            for key, cps in chunks.items():
+                for x, y in cps:
+                    if (x + (y // 5) % 2) % cell_w and (y + (x // 6) % 2) % cell_h:
+                        g[y][x] = True
+            frames.append(g)
+            continue
+        t = k
+        # flying chunks, shrinking (burning up) over time
+        for key, cps in chunks.items():
+            vx, vy = vel[key]
+            ox = vx * t
+            oy = vy * t + 0.06 * t * t          # gravity, in sprite rows
+            keep = 1.0 - k / (n * 0.9)
+            for x, y in cps:
+                if rnd.random() > keep:
+                    continue
+                nx, ny = round(x + ox), round(y + oy)
+                if 0 <= nx < W and 0 <= ny < H:
+                    g[ny][nx] = True
+        # fireball from the centre: grows, then burns out from the middle
+        if k <= 8:
+            r = 2 + 2.2 * k
+            hole = max(0, k - 3) * 2.0
+            for y in range(H):
+                for x in range(W):
+                    dx, dy = x - cx, (y - cy) * 2
+                    d = math.hypot(dx, dy)
+                    sp = spikes[int((math.atan2(dy, dx) + math.pi) / (2 * math.pi) * 12) % 12]
+                    if hole < d <= r * sp and rnd.random() < 1.0 - k / 10:
+                        g[y][x] = True
+        frames.append(g)
+    return frames
+
+
+SHATTER2_COLOURS = [1, 1, 7, 1, 7, 7, 8, 10, 8, 2, 9, 11]
+
+
+def shatter2_frames(ten, n=len(SHATTER2_COLOURS), seed=7):
+    """Cleaner shatter: jagged crack lines split the '10' into ~6 chunks that
+    first drift apart (still readable as a 10), then fly off with gravity and
+    burn out one by one, with a sparse burst of sparks behind them."""
+    import random
+    rnd = random.Random(seed)
+    H, W = len(ten), len(ten[0])
+    pts = [(x, y) for y in range(H) for x in range(W) if ten[y][x]]
+    xs = [x for x, _ in pts]
+    split = (min(xs) + max(xs)) // 2 - 2            # between the 1 and the 0 (approx.)
+    # gap column between the digits: the empty column closest to split
+    cols = {x for x, _ in pts}
+    gap = min((x for x in range(min(xs), max(xs)) if x not in cols), key=lambda x: abs(x - split), default=split)
+    cx = sum(xs) / len(xs)
+    cy = sum(y for _, y in pts) / len(pts)
+
+    def piece(x, y):
+        """Which chunk a pixel belongs to, or None on a crack line."""
+        if x < gap:                                   # the 1: one diagonal crack
+            c = y - (cy - 1) - (x - gap) * 0.6
+            if abs(c) < 0.7:
+                return None
+            return 0 if c < 0 else 1
+        # the 0: a jagged horizontal crack and a slanted vertical one
+        h = y - (cy + (1 if (x // 2) % 2 else -0.0))
+        v = x - (gap + (max(xs) - gap) / 2) - (cy - y) * 0.25
+        if abs(h) < 0.6 or abs(v) < 0.6:
+            return None
+        return 2 + (h > 0) * 2 + (v > 0)
+
+    chunks = {}
+    for x, y in pts:
+        p = piece(x, y)
+        if p is not None:
+            chunks.setdefault(p, []).append((x, y))
+    vel, die = {}, {}
+    order = sorted(chunks, key=lambda p: len(chunks[p]))
+    for i, p in enumerate(order):                     # small chunks burn out first
+        cps = chunks[p]
+        mx = sum(q[0] for q in cps) / len(cps)
+        my = sum(q[1] for q in cps) / len(cps)
+        dx, dy = mx - cx, (my - cy) * 2
+        d = math.hypot(dx, dy) or 1
+        vel[p] = (dx / d, dy / d / 2 - 0.25)          # outward, a little upward kick
+        die[p] = 6 + i * (n - 7) // max(1, len(order) - 1)
+    sparks = [(rnd.uniform(0, 2 * math.pi), rnd.uniform(0.5, 1.0)) for _ in range(18)]
+    frames = []
+    for k in range(n):
+        g = [[False] * W for _ in range(H)]
+        # distance travelled: slow drift first, then fast (ease-in)
+        s = 0.5 * k + 0.12 * k * k
+        for p, cps in chunks.items():
+            if k >= die[p]:
+                continue
+            vx, vy = vel[p]
+            ox, oy = vx * s * 1.6, vy * s + 0.05 * k * k
+            for x, y in cps:
+                nx, ny = round(x + ox), round(y + oy)
+                if 0 <= nx < W and 0 <= ny < H:
+                    g[ny][nx] = True
+        if 2 <= k <= 9:                                # sparks / fire ring
+            r = 2.0 + 1.6 * (k - 2)
+            for ang, sp in sparks:
+                for rr in (r * sp, r * sp - 1.5):
+                    x = round(cx + math.cos(ang) * rr)
+                    y = round(cy + math.sin(ang) * rr / 2)
+                    if 0 <= x < W and 0 <= y < H:
+                        g[y][x] = True
+        frames.append(g)
+    return frames
+
+
+# Multicolor fire: per frame the colours for heat 3 (hottest, %01 = $d025),
+# heat 2 (%11 = $d026) and heat 1 (coolest, %10 = the 10's own colour).
+# $d025/$d026 are shared with the VIPP logo, whose highlights and outline glow
+# along during the explosion (never in the bars' red, so the bars stay apart).
+FIRE_COLOURS = [(1, 7, 10), (1, 7, 10), (1, 7, 10), (7, 10, 2), (7, 10, 2), (7, 8, 2),
+                (7, 8, 2), (10, 8, 2), (10, 8, 9), (8, 9, 11), (8, 11, 11), (12, 11, 11)]
+
+
+def fire_frames(ten, n=len(FIRE_COLOURS), seed=7):
+    """Multicolor explosion of the '10' (12 x 21 logical px, each 2 screen px
+    wide; the sprite is Y-expanded). Returns per frame a grid of heat values
+    0 (empty) .. 3 (hottest), which map to %00, %11, %10, %01."""
+    import random
+    rnd = random.Random(seed)
+    debris = shatter2_frames(ten, n=n, seed=seed)          # flying chunks (hires)
+    H, W = len(ten), len(ten[0])
+    pts = [(x, y) for y in range(H) for x in range(W) if ten[y][x]]
+    cx = sum(x for x, _ in pts) / len(pts) / 2              # in logical px
+    cy = sum(y for _, y in pts) / len(pts)
+    spikes = [rnd.uniform(0.65, 1.35) for _ in range(14)]
+    noise = [[rnd.random() for _ in range(12)] for _ in range(21)]
+    frames = []
+    for k in range(n):
+        heat = [[0] * 12 for _ in range(21)]
+        # fireball: grows fast, hot core, burns out from the middle later on
+        if k >= 1:
+            R = min(6.5, 1.5 + 1.6 * k)                     # logical px (x); y counts double
+            hole = max(0.0, (k - 6) * 1.3)
+            for y in range(21):
+                for x in range(12):
+                    dx, dy = (x + 0.5 - cx) * 2, (y - cy) * 2
+                    d = math.hypot(dx, dy) / 2
+                    sp = spikes[int((math.atan2(dy, dx) + math.pi) / (2 * math.pi) * 14) % 14]
+                    edge = R * sp
+                    if hole < d <= edge:
+                        f = 1 - d / edge + 0.35 * (noise[y][x] - 0.5)
+                        h = 3 if f > 0.55 else 2 if f > 0.25 else 1
+                        heat[y][x] = max(heat[y][x], h)
+        # burning chunks of the 10 on top: hot at first, cooling
+        dh = 3 if k < 3 else 2 if k < 7 else 1
+        for y in range(H):
+            for x in range(W):
+                if debris[k][y][x]:
+                    lx = x // 2
+                    heat[y][lx] = max(heat[y][lx], dh)
+        frames.append(heat)
+    return frames
