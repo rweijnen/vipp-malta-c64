@@ -8,7 +8,7 @@ A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultim
 - laser and explosion **sound effects** on SID voice 3, which is borrowed from the music's drums the way games did it
 - a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members, with a rippling **water reflection** below it (flipped, half height, orange fading into purple)
 - music: *Commando* by Rob Hubbard (from HVSC)
-- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 0 shows an original room with the agent.
+- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 1 has the agent running, somersaulting and making footsteps in an original room.
 
 ## Run it
 

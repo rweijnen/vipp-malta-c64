@@ -16,6 +16,8 @@ if (-not (Test-Path $exo)) { throw "Exomizer is missing: build it with tools\bui
 
 python tools\gen_assets.py
 if ($LASTEXITCODE -ne 0) { throw "asset generation failed" }
+python tools\im\gen_mission.py
+if ($LASTEXITCODE -ne 0) { throw "mission table generation failed" }
 
 & $tass -B -Wall -o build\vipp_full.prg -L build\vipp.lst src\main.asm
 if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
