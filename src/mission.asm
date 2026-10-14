@@ -28,12 +28,14 @@
 ; music player is re-initialised when the demo comes back).
 ; ---------------------------------------------------------------------------
 
-            .include "../assets/im/room_test.inc"
-            .include "../assets/im/lift.inc"
-            .include "../build/mission_agent.inc"
+            .include "../assets/im/lift.inc"         ; constants only
+; (terminal.inc and mission_agent.inc contain tables: included in the code
+; segment below, never here, where they would land after the demo's code)
 
 M_SCREEN    = $8000
 M_LIFTSPR   = $8400
+M_ROBOTSPR  = $84c0             ; 7 blocks: the robots' turn
+M_TERMSPR   = $8680             ; 6 blocks: the terminal's corners
 M_CHARSET   = $8800
 M_LIFTCHR   = $a000
 M_AGENT     = $a800
@@ -58,6 +60,7 @@ FR_FLIP_END = 16
 SC_ROOM     = 0                 ; scenes
 SC_LIFT     = 1
 SC_INTRO    = 2                 ; the full screen shaft of the game's start (no panel)
+SC_TERM     = 3                 ; a security terminal
 
 SPEECH      = $0880             ; the original speech engine: A = phrase, $ff = busy?, $fe = stop
 
@@ -121,6 +124,10 @@ C_GOTO      = 4                 ; address (word)
 C_SCENE     = 5                 ; scene, shaft row ($ff: keep), X (word), Y, facing
 C_RIDE      = 6                 ; shaft row: ride the lift until view row 0 shows it
 C_SAY       = 7                 ; phrase: speak it and wait until it is done
+C_ROOM      = 8                 ; room index (0-4), X (word), Y, facing: enter the room
+C_TERM      = 9                 ; terminal (0-4): show it (C_STAND to wait, C_BACK to leave)
+C_BACK      = 10                ; back from the terminal into the room
+C_SEARCH    = 11                ; ticks: search the furniture in front of the agent
 
             * = $7000
 mission_run
@@ -241,6 +248,14 @@ irq_main
             lda #TICK_FRAMES
             sta tick_ctr
             jsr script_tick
+            lda scene
+            cmp #SC_ROOM
+            bne _norob
+            jsr robots_tick
+            jsr robots_draw
+_norob      lda scene
+            cmp #SC_TERM
+            beq +
             jsr agent_draw
             jsr footsteps
 +           jsr next_irq
@@ -671,47 +686,6 @@ put_inner   sta gt
             rts
 
 ; --- scenes ------------------------------------------------------------------------------
-scene_room
-            lda #SC_ROOM
-            sta scene
-            lda #$0b            ; display off while drawing
-            sta $d011
-            ldx #0              ; room screen + colour RAM (1000 bytes each)
--           lda room_test_screen,x
-            sta M_SCREEN,x
-            lda room_test_screen + 250,x
-            sta M_SCREEN + 250,x
-            lda room_test_screen + 500,x
-            sta M_SCREEN + 500,x
-            lda room_test_screen + 750,x
-            sta M_SCREEN + 750,x
-            lda room_test_colram,x
-            sta $d800,x
-            lda room_test_colram + 250,x
-            sta $d800 + 250,x
-            lda room_test_colram + 500,x
-            sta $d800 + 500,x
-            lda room_test_colram + 750,x
-            sta $d800 + 750,x
-            inx
-            cpx #250
-            bne -
-            lda #ROOM_TEST_BG
-            sta $d021
-            lda #ROOM_TEST_MC1
-            sta $d022
-            lda #ROOM_TEST_MC2
-            sta $d023
-            lda #D018_ROOM
-            sta $d018
-            lda #0
-            sta $d017
-            sta $d01c
-            sta $d01d
-            sta $d01b
-            lda #0              ; only the agent's sprites
-            sta $d015
-            jmp scene_common
 
 ; SID model, the well-known way: voice 3 at frequency $ffff with the test bit,
 ; then the sawtooth started and OSC3 read right away: a 6581 gives 3, an
@@ -966,6 +940,14 @@ script_next
             beq _ride
             cmp #C_SAY
             beq _say
+            cmp #C_ROOM
+            beq _room
+            cmp #C_TERM
+            beq _term
+            cmp #C_BACK
+            beq _back
+            cmp #C_SEARCH
+            beq _search
             ; unknown command: show it plainly (red border) and stop
             lda #2
             sta $d020
@@ -998,6 +980,46 @@ _goto       iny
             sta sc_p + 1
             stx sc_p
             jmp script_next
+_room       iny                 ; room, X, Y, facing
+            lda (sc_p),y
+            sta room_cur
+            iny
+            lda (sc_p),y
+            sta ag_x
+            iny
+            lda (sc_p),y
+            sta ag_x + 1
+            iny
+            lda (sc_p),y
+            sta ag_y
+            iny
+            lda (sc_p),y
+            sta ag_face
+            lda #FR_STAND
+            sta ag_frame
+            lda #6
+            jsr advance
+            jsr scene_room
+            jmp script_next
+_term       iny
+            lda (sc_p),y
+            pha
+            lda #2
+            jsr advance
+            pla
+            jsr scene_term
+            jmp script_next
+_back       lda #1
+            jsr advance
+            jsr scene_back
+            jmp script_next
+_search     iny
+            lda (sc_p),y
+            pha
+            lda #2
+            jsr advance
+            pla
+            jmp search_start
 _say        iny                 ; the phrase
             lda (sc_p),y
             pha
@@ -1075,9 +1097,17 @@ script_tick
             beq _flip
             cmp #C_RIDE
             beq _ride
+            cmp #C_SEARCH
+            beq _search
             ; C_STAND
             dec sc_wait
             bne +
+            jmp script_next
++           rts
+_search     jsr search_tick     ; C: done
+            bcc +
+            lda #FR_STAND
+            sta ag_frame
             jmp script_next
 +           rts
 _ride       lda sh_phase        ; arrived? (stopped, or the hum spinning down)
@@ -1327,12 +1357,13 @@ _step       ldx #$86            ; facing left: $861e
 ; Corridors: shaft row of the top edge, sides, fill colour left, right.
 ; A corridor is in line with the car when view row 4 shows its top edge.
 corridor_table
-            .byte 4, CORR_R, 0, 7
-            .byte 28, CORR_L, 5, 0
-            .byte 76, CORR_L | CORR_R, 3, 3
-            .byte 124, CORR_R, 0, 5
-            .byte 172, CORR_L, 7, 0
+            .byte 4, CORR_R, 0, 7               ; room 18 (its entrance: left)
+            .byte 40, CORR_L, 5, 0              ; room 24 (right)
+            .byte 76, CORR_R, 0, 3              ; room 23 (left)
+            .byte 112, CORR_L, 7, 0             ; room 29 (right)
+            .byte 148, CORR_L | CORR_R, 5, 5    ; room 0 (both)
             .byte $ff
+
 
 row_lo      .for r := 0, r < 26, r += 1
             .byte <(M_SCREEN + r * 40)
@@ -1355,35 +1386,145 @@ mission_script
             .byte C_SCENE, SC_LIFT, $ff         ; then the pocket computer appears
             .word LIFT_AGENT_X
             .byte LIFT_AGENT_Y, FACE_RIGHT
-            .byte C_STAND, 25
-            .byte C_RIDE, 28 - CAR_ROW          ; to the left corridor
+            .byte C_STAND, 15
+
+            ; room 18: out to the right, in through its left door (row 6)
+            .byte C_RUN
+            .word 340
+            .byte C_ROOM, 0
+            .word 4
+            .byte floor_y(6), FACE_RIGHT
+            .byte C_RUN
+            .word 49
+            .byte C_STAND, 6
+            .byte C_TERM, 0
+            .byte C_STAND, 80
+            .byte C_BACK
+            .byte C_STAND, 6
+            .byte C_FACE, FACE_LEFT
+            .byte C_RUN
+            .word 4
+            .byte C_SCENE, SC_LIFT, $ff
+            .word 330
+            .byte LIFT_AGENT_Y, FACE_LEFT
+            .byte C_RUN
+            .word LIFT_AGENT_X
+            .byte C_STAND, 8
+
+            ; room 24: down, out to the left, in through its right door (row 6)
+            .byte C_RIDE, 40 - CAR_ROW
             .byte C_STAND, 8
             .byte C_FACE, FACE_LEFT
             .byte C_RUN
             .word 10
-            .byte C_SCENE, SC_ROOM, $ff         ; the room's entrance: bottom right
+            .byte C_ROOM, 1
             .word 330
-            .byte floor_y(24), FACE_LEFT
+            .byte floor_y(6), FACE_LEFT
             .byte C_RUN
-            .word 262
-            .byte C_FLIP
-            .byte C_RUN
-            .word 160
-            .byte C_STAND, 20
-            .byte C_FACE, FACE_RIGHT
+            .word 285
             .byte C_STAND, 6
+            .byte C_TERM, 1
+            .byte C_STAND, 80
+            .byte C_BACK
+            .byte C_STAND, 6
+            .byte C_FACE, FACE_RIGHT
             .byte C_RUN
             .word 340
-            .byte C_SCENE, SC_LIFT, $ff         ; back out into the corridor
-            .word LIFT_AGENT_X - 5 * 32         ; runs back to exactly LIFT_AGENT_X
+            .byte C_SCENE, SC_LIFT, $ff
+            .word LIFT_AGENT_X - 5 * 32
             .byte LIFT_AGENT_Y, FACE_RIGHT
             .byte C_RUN
             .word LIFT_AGENT_X
+            .byte C_STAND, 8
+
+            ; room 23: down, out to the right, in through its left door (row 24)
+            .byte C_RIDE, 76 - CAR_ROW
+            .byte C_STAND, 8
+            .byte C_RUN
+            .word 340
+            .byte C_ROOM, 2
+            .word 4
+            .byte floor_y(24), FACE_RIGHT
+            .byte C_RUN
+            .word 59
+            .byte C_STAND, 6
+            .byte C_TERM, 2
+            .byte C_STAND, 80
+            .byte C_BACK
+            .byte C_STAND, 6
+            .byte C_RUN
+            .word 174
+            .byte C_SEARCH, 40
+            .byte C_STAND, 6
+            .byte C_FACE, FACE_LEFT
+            .byte C_RUN
+            .word 4
+            .byte C_SCENE, SC_LIFT, $ff
+            .word 330
+            .byte LIFT_AGENT_Y, FACE_LEFT
+            .byte C_RUN
+            .word LIFT_AGENT_X
+            .byte C_STAND, 8
+
+            ; room 29: down, out to the left, in through its right door (row 24)
+            .byte C_RIDE, 112 - CAR_ROW
+            .byte C_STAND, 8
+            .byte C_FACE, FACE_LEFT
+            .byte C_RUN
+            .word 10
+            .byte C_ROOM, 3
+            .word 330
+            .byte floor_y(24), FACE_LEFT
+            .byte C_RUN
+            .word 270
+            .byte C_STAND, 6
+            .byte C_TERM, 3
+            .byte C_STAND, 80
+            .byte C_BACK
+            .byte C_STAND, 6
+            .byte C_RUN
+            .word 220
+            .byte C_FLIP
+            .byte C_RUN
+            .word 140
             .byte C_STAND, 10
-            .byte C_RIDE, 76 - CAR_ROW          ; further down
-            .byte C_STAND, 25
+            .byte C_FACE, FACE_RIGHT
+            .byte C_RUN
+            .word 340
+            .byte C_SCENE, SC_LIFT, $ff
+            .word LIFT_AGENT_X - 5 * 32
+            .byte LIFT_AGENT_Y, FACE_RIGHT
+            .byte C_RUN
+            .word LIFT_AGENT_X
+            .byte C_STAND, 8
+
+            ; room 0: down, out to the right, in through its left door (row 24)
+            .byte C_RIDE, 148 - CAR_ROW
+            .byte C_STAND, 8
+            .byte C_RUN
+            .word 340
+            .byte C_ROOM, 4
+            .word 4
+            .byte floor_y(24), FACE_RIGHT
+            .byte C_RUN
+            .word 39
+            .byte C_FLIP
+            .byte C_RUN
+            .word 124
+            .byte C_STAND, 6
+            .byte C_TERM, 4
+            .byte C_STAND, 80
+            .byte C_BACK
+            .byte C_STAND, 10
+            .byte C_FACE, FACE_LEFT
+            .byte C_RUN
+            .word 119
+            .byte C_FLIP
+            .byte C_RUN
+            .word 4
             .byte C_GOTO
             .word mission_script
+
 
             .align 256
 rev_bits                        ; bit-reversed bytes, for mirroring hires sprites
@@ -1414,22 +1555,26 @@ split_store sta $d022           ; line 170, cycle 58 (right border)
             pla
             rti
 
+            .include "../build/mission_agent.inc"   ; the agent's frame tables
+            .include "../assets/im/terminal.inc"    ; the terminal's corner sprites
 mission_code_end
             .cerror mission_code_end > $8000, "mission code beyond $7fff"
 
 ; --- mission data in bank 2 --------------------------------------------------------
             * = M_LIFTSPR
             .binary "../assets/im/lift_sprites.bin"
+            * = M_ROBOTSPR
+            .binary "../assets/im/robot_sprites.bin"
+            .cerror * != M_TERMSPR, "robot sprites must be 7 blocks"
+            .binary "../assets/im/terminal_sprites.bin"
+            .cerror * != M_CHARSET, "terminal sprites must end at the charset"
 
             * = M_CHARSET
             .binary "../assets/im/charset_rooms.bin"
             .cerror * != $9000, "room charset must end at $9000 (char ROM area follows)"
 
             * = $9000           ; CPU-only area (the VIC sees char ROM here)
-room_test_screen
-            .binary "../assets/im/room_test_screen.bin"
-room_test_colram
-            .binary "../assets/im/room_test_colram.bin"
+            .include "../build/mission_rooms_9000.inc"
 speech_table .binary "../assets/im/speech_engine.bin", 0, $80     ; -> $0800 at start
 lift_panel  .binary "../assets/im/lift_panel.bin"       ; 400 chars, 400 colours
 lift_inner  .binary "../assets/im/lift_inner.bin"       ; 15 x 6 chars, 15 x 6 colours
@@ -1438,7 +1583,7 @@ corr_right  .binary "../assets/im/corr_right.bin"
             .cerror * > $a000, "room data beyond $9fff"
 
             * = M_LIFTCHR
-            .binary "../assets/im/charset_lift.bin"
+            .binary "../build/charset_lift_vipp.bin"     ; + hyphen and comma
 
             * = M_AGENT
             .binary "../assets/im/agent_sprites.bin"
@@ -1452,6 +1597,20 @@ corr_right  .binary "../assets/im/corr_right.bin"
             * = SPEECH
             .binary "../assets/im/speech_engine.bin", $80
             .cerror * != $0d00, "speech engine must end at $0cff"
+
+; --- mission part 2 and its data ------------------------------------------------
+            .include "mission_rooms.asm"
+            .include "../build/mission_rooms.inc"
+            .cerror * > $d000, "mission part 2 beyond $cfff"
+
+            * = $d000           ; RAM under the I/O area: packed rooms (read with $01 = $34)
+            .include "../build/mission_rooms_d000.inc"
+            .cerror * > $e000, "packed rooms beyond $dfff"
+
+            * = $f780           ; after the speech: terminals, the Searching box
+            .include "../build/mission_term.inc"
+search_box  .binary "../assets/im/search_box.bin"
+            .cerror * > $fffa, "terminal data reaches the CPU vectors"
 
             * = $e000           ; RAM under the KERNAL (both modes run with $01 = $35)
             .binary "../assets/im/speech.bin"

@@ -1954,6 +1954,9 @@ bw4         sty $d021           ; w4: cycle 12 of line b+2
             ldy beam_ysave
             ldx $d012           ; the kernel continues on the current line
             rts
+            .cerror * > SID_STUBS, "beam code runs into the SID stubs at ", SID_STUBS
 
 ; --- VIPP Mission (Impossible Mission mode) --------------------------------------
+; mission.asm sets its own addresses (* = $7000 ...) before any code or data
+before_mission
             .include "mission.asm"

@@ -7,9 +7,14 @@ $exo   = "$PSScriptRoot\tools\exomizer\exomizer.exe"
 
 # The VIPP Mission mode needs data extracted from your own Impossible Mission
 # disk image (never in git): see tools\im\extract.py
-foreach ($f in 'agent_sprites.bin', 'charset_rooms.bin', 'room_test_screen.bin', 'room_test_colram.bin', 'room_test.inc') {
+foreach ($f in 'agent_sprites.bin', 'charset_rooms.bin', 'robot_sprites.bin') {
     if (-not (Test-Path "assets\im\$f")) {
         throw "assets\im\$f is missing: run tools\im\extract.py on a memory dump of your impossible_mission.d64 first (see README)"
+    }
+}
+foreach ($f in 'rooms.json', 'terminal_screen.bin', 'terminal_colram.bin', 'terminal_sprites.bin', 'terminal.inc', 'search_box.bin', 'speech.bin', 'speech_engine.bin') {
+    if (-not (Test-Path "assets\im\$f")) {
+        throw "assets\im\$f is missing: run tools\im\extract_rooms.py, extract_terminal.py and extract_search.py on snapshots of your own game (see README)"
     }
 }
 foreach ($f in 'charset_lift.bin', 'charset_panel.bin', 'lift_panel.bin', 'lift_inner.bin', 'corr_left.bin', 'corr_right.bin', 'lift_sprites.bin', 'lift.inc') {
@@ -26,6 +31,9 @@ if ($LASTEXITCODE -ne 0) { throw "mission table generation failed" }
 
 & $tass -B -Wall -o build\vipp_full.prg -L build\vipp.lst src\main.asm
 if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
+# 64tass lets a later section overwrite an earlier one without a word
+python tools\check_overlap.py build\vipp.lst
+if ($LASTEXITCODE -ne 0) { throw "two parts of the program are assembled at the same address" }
 
 # one self-unpacking file: the full program spans $0801-$b7ff (and more later)
 & $exo sfx sys -q -o build\vipp.prg build\vipp_full.prg
