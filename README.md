@@ -1,4 +1,4 @@
-# VIPP Malta 2026 — C64 demo
+# VIPP Malta 2026: C64 demo
 
 A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultimate):
 
@@ -8,7 +8,34 @@ A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultim
 - laser and explosion **sound effects** on SID voice 3, which is borrowed from the music's drums the way games did it
 - a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members, with a rippling **water reflection** below it (flipped, half height, orange fading into purple)
 - music: *Commando* by Rob Hubbard (from HVSC)
-- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 2 has the lift ride down the shaft (original scrolling and hum), the walk through a corridor into a room and back, and the original speech intro ("Another visitor... stay a while... stay forever!"; boosted on 8580 SIDs, which play volume-register speech much quieter: use a 6581 for the original level).
+- **VIPP Mission** (press **Space**, Space again returns): a self-playing *Impossible Mission* (Epyx, 1984) built from the original game's graphics, sounds and speech:
+  - the speech intro ("Another visitor... stay a while... stay forever!")
+  - the lift ride down the shaft with the original scrolling and hum, and the pocket computer's map
+  - 5 original rooms with robots that patrol and fire
+  - the security terminals, each showing a Parallels product (RAS, DaaS, Secure Workspace, Browser Isolation, Desktop)
+  - searching furniture ("Nothing here." or the VIPP find)
+  - two deaths per loop: a robot's zap and a fall with the scream
+  - the speech plays at the original level on a 6581 SID; on an 8580 or FPGA SID it is boosted but quieter, so 6581 is the better setting for this mode
+
+## Screenshots
+
+The demo:
+
+![The demo: bouncing VIPP logo, the 10, the reflected scroller](docs/media/demo.gif)
+
+VIPP Mission:
+
+| | |
+|---|---|
+| ![The lift ride](docs/media/mission_lift.gif) | ![Room 23: zap, somersaults, the search](docs/media/mission_room23.gif) |
+| The lift ride: the shaft scrolls past the corridors | Room 23: the robot fires, the agent somersaults over it and searches the candy machine |
+| ![A security terminal](docs/media/mission_terminal.png) | ![The pocket computer's map](docs/media/mission_map.png) |
+| A security terminal with a Parallels product | The map: the shaft, its corridors and the visited rooms |
+| ![The search result](docs/media/mission_search.png) | ![The zap death](docs/media/mission_zap_death.gif) |
+| The VIPP find | Zapped: the original electrocution |
+
+The GIFs are recorded in VICE with `tools/vicegif.py`.
+
 
 ## Run it
 
@@ -59,7 +86,7 @@ Everything we learned (limits, timings, techniques, bugs, how to test) is in [`d
 
 ## How it works
 
-- **Line 72–225 (FLD area):** one IRQ runs every raster line here.
+- **Line 72-225 (FLD area):** one IRQ runs every raster line here.
   - It keeps YSCROLL one line behind the raster, so there are no badlines.
   - It works through a sorted list of events:
     - moving the sprites down for logo rows 2 and 3
@@ -67,10 +94,10 @@ Everything we learned (limits, timings, techniques, bugs, how to test) is in [`d
     - lending sprite 7 to the gun and taking it back
     - drawing the laser beam
 - **Laser beam:** CIA 1 timer A is synced to the raster at start-up with a double IRQ (period 63 cycles = one PAL line). One timer read gives the exact cycle. Then "sleds" of `cmp #$c9` bytes wait with single-cycle precision, so the background colour switches on and off exactly at the "10". It also switches only where needed, which avoids the 8565 "grey dot" bug.
-- **Line 227–242:** the scroller. Because of the FLD, screen rows 3–4 appear here.
-- **Line 243–250:** the reflection, which is screen row 5.
+- **Line 227-242:** the scroller. Because of the FLD, screen rows 3-4 appear here.
+- **Line 243-250:** the reflection, which is screen row 5.
   - The charset only holds the glyphs the texts use: 4 chars each for the 2×2 form plus 2 for the flipped, half-height reflection.
-  - From line 242, the bottom IRQ gives lines 244–250 their own fine scroll (±1 px wave) at the start of each line. That is the ripple.
+  - From line 242, the bottom IRQ gives lines 244-250 their own fine scroll (±1 px wave) at the start of each line. That is the ripple.
 - **Line 251:** music, effects, movement, scrolling and colours, all done in the border area.
 - **Sound:** every SID write of the music player goes through a generated stub (`build\music.inc`). The stub writes to the SID straight away, except voice 3 while an effect plays, and keeps a copy so voice 3 can be handed back afterwards.
 
@@ -79,3 +106,9 @@ Everything we learned (limits, timings, techniques, bugs, how to test) is in [`d
 - It stops on code or memory writes.
 - It takes exact full-frame screenshots and dumps registers/memory.
 - It always closes VICE again, and refuses to start while another VICE holds the monitor port.
+
+## Credits
+
+- Music: *Commando* by Rob Hubbard.
+- *Impossible Mission* (Epyx, 1984): graphics, sounds, speech and rooms from the original game, for the private VIPP event only.
+- AI assistance was used in this project.
