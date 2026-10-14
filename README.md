@@ -110,5 +110,5 @@ Everything we learned (limits, timings, techniques, bugs, how to test) is in [`d
 ## Credits
 
 - Music: *Commando* by Rob Hubbard.
-- *Impossible Mission* (Epyx, 1984): graphics, sounds, speech and rooms from the original game, for the private VIPP event only.
+- *Impossible Mission* (Epyx, 1984): graphics, sounds, speech and rooms inspired by the original game.
 - AI assistance was used in this project.
