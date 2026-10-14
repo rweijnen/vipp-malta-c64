@@ -48,6 +48,8 @@ entry_x     = $62               ; 2: the agent's door in this room
 entry_y     = $64
 entry_face  = $65
 death_go    = $66               ; 2: the script after a death (C_ONDEATH)
+fall_cnt    = $6d               ; falling: the original's $41
+ag_hidden   = $6e               ; the agent fell out of the room
 
 ; --- per room ----------------------------------------------------------------------
 ; Entering a room (and back from the terminal): the zap's blocks in place,
@@ -374,6 +376,7 @@ _no         clc
 
 ; Once per tick in a room: does a robot or the zap touch the agent?
 hit_check   lda dying
+            ora ag_hidden       ; (fallen out of the room: nothing to hit)
             bne _done
             jsr agent_box
             lda zap_rob

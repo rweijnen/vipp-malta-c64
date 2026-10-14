@@ -95,12 +95,15 @@ SCRIPT = [
     ("RUN", 39), ("FLIP",), ("RUN", 124), ("STAND", 6),
     ("TERM", 4), ("STAND", 80), ("BACK",),
     ("STAND", 10),
-    ("FACE", L), ("RUN", 119), ("FLIP",),
+    ("RUN", 144),                       # on to the right: off the island
+    ("FALL",), ("SAY", 7),              # falls through the gap: the scream
+    ("RESPAWN",),                       # back at the door
+    ("STAND", 10),
     ("LABEL", "room0_out"),
-    ("RUN", 4),
+    ("FACE", L), ("RUN", 4),
     ("GOTO", "mission_script"),
 ]
-PLANNED_DEATHS = 1
+PLANNED_DEATHS = 1                  # by a robot (room 18); plus the fall in room 0
 
 
 # --- 64tass ----------------------------------------------------------------------------
@@ -119,7 +122,7 @@ def emit():
             out.append(f"            .byte C_RUN\n            .word {c[1]}\n")
         elif op in ("GOTO", "ONDEATH"):
             out.append(f"            .byte C_{op}\n            .word {c[1]}\n")
-        elif op in ("FLIP", "BACK"):
+        elif op in ("FLIP", "BACK", "FALL", "RESPAWN"):
             out.append(f"            .byte C_{op}\n")
         elif op == "FACE":
             out.append(f"            .byte C_FACE, {c[1]}\n")
@@ -152,6 +155,7 @@ class Robot:
 
 class Sim:
     def __init__(self, rooms, agent):
+        self.hidden, self.falls = False, 0
         self.rooms = rooms              # per room: list of (x, y, lo, hi, type)
         self.dx3, self.dy3 = agent      # signed per frame
         self.labels = {c[1]: i for i, c in enumerate(SCRIPT) if c[0] == "LABEL"}
@@ -217,6 +221,8 @@ class Sim:
         return l0 + 5, l0 + 16, t0 + 4, t0 + 18
 
     def hit(self):
+        if self.hidden:
+            return None
         al, ar, at, ab = self.agent_box()
 
         def over(l, r, t, b):
@@ -252,6 +258,18 @@ class Sim:
                 self.entry = (self.x, self.y, self.face)
                 self.scene = "room"
                 self.zap = None
+                self.robots_init()
+                self.pc += 1
+            elif op == "SAY":                         # the game waits: no ticks
+                self.pc += 1
+            elif op == "FALL":                        # _fall
+                self.fall_cnt = 1
+                self.pc += 1
+                self.cmd = "FALL"
+                return
+            elif op == "RESPAWN":                     # _respawn
+                self.x, self.y, self.face = self.entry
+                self.frame, self.zap, self.hidden = 14, None, False
                 self.robots_init()
                 self.pc += 1
             elif op == "TERM":
@@ -303,6 +321,15 @@ class Sim:
                 r = self.start()
             else:
                 self.frame -= 1
+        elif op == "FALL":                            # _falling
+            dy = min(8, self.fall_cnt // 8 + 2)
+            if self.y + dy >= 248:
+                self.hidden = True
+                self.falls += 1
+                r = self.start()
+            else:
+                self.y += dy
+                self.fall_cnt += 1
         elif op == "SEARCH":
             self.left -= 1
             if self.left == 0:

@@ -129,6 +129,8 @@ C_TERM      = 9                 ; terminal (0-4): show it (C_STAND to wait, C_BA
 C_BACK      = 10                ; back from the terminal into the room
 C_SEARCH    = 11                ; ticks, result (0 nothing, 1 VIPP find): search the furniture
 C_ONDEATH   = 12                ; address (word): where the script goes on after a death
+C_FALL      = 13                ; fall as the original until off the screen, then hidden
+C_RESPAWN   = 14                ; back at the room's door, the robots at their places
 
             * = $7000
 mission_run
@@ -149,6 +151,7 @@ mission_run
             sta sh_pos
             sta speaking
             sta dying
+            sta ag_hidden
             lda #$5a
             sta rnd2
             lda #0
@@ -975,6 +978,10 @@ script_next
             beq _search
             cmp #C_ONDEATH
             beq _ondeath
+            cmp #C_FALL
+            beq _fall
+            cmp #C_RESPAWN
+            beq _respawn
             ; unknown command: show it plainly (red border) and stop
             lda #2
             sta $d020
@@ -1059,6 +1066,30 @@ _search     iny                 ; ticks, result
             jsr advance
             pla
             jmp search_start
+_fall       lda #1              ; the original's $41: grows each tick
+            sta fall_cnt
+            lda #$80            ; no more footsteps
+            sta $d412
+            lda #1
+            jmp advance
+_respawn    lda entry_x         ; as after a zap (death_frame)
+            sta ag_x
+            lda entry_x + 1
+            sta ag_x + 1
+            lda entry_y
+            sta ag_y
+            lda entry_face
+            sta ag_face
+            lda #FR_STAND
+            sta ag_frame
+            lda #0
+            sta ag_hidden
+            jsr danger_room
+            jsr robots_init
+            jsr robots_draw
+            lda #1
+            jsr advance
+            jmp script_next
 _ondeath    iny
             lda (sc_p),y
             sta death_go
@@ -1147,11 +1178,35 @@ script_tick
             beq _ride
             cmp #C_SEARCH
             beq _search
+            cmp #C_FALL
+            beq _falling
             ; C_STAND
             dec sc_wait
             bne +
             jmp script_next
 +           rts
+; Falling as the original ($8620): down min(8, $41 / 8 + 2) px a tick, $41
+; growing, the frame as it was; off the bottom: hidden (then the scream).
+_falling    lda fall_cnt
+            lsr a
+            lsr a
+            lsr a
+            clc
+            adc #2
+            cmp #9
+            bcc +
+            lda #8
++           clc
+            adc ag_y
+            bcs _gone
+            cmp #248            ; the body below the screen's bottom
+            bcs _gone
+            sta ag_y
+            inc fall_cnt
+            rts
+_gone       lda #1
+            sta ag_hidden
+            jmp script_next
 _search     jsr search_tick     ; C: done
             bcc +
             lda #FR_STAND
@@ -1234,7 +1289,13 @@ _left       sec
 ; The pieces of the current frame: block, mirrored to the facing if needed,
 ; sprite pointer, position. Sprite 1 = white overlay, 2 = body, 3 = legs.
 agent_draw
-            lda #0
+            lda ag_hidden       ; fallen out of the room: no agent
+            beq +
+            lda $d015
+            and #%11110001
+            sta $d015
+            rts
++           lda #0
             sta en_bits
             ldx #2
 _piece      lda ag_frame
