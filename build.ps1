@@ -12,6 +12,11 @@ foreach ($f in 'agent_sprites.bin', 'charset_rooms.bin', 'room_test_screen.bin',
         throw "assets\im\$f is missing: run tools\im\extract.py on a memory dump of your impossible_mission.d64 first (see README)"
     }
 }
+foreach ($f in 'charset_lift.bin', 'charset_panel.bin', 'lift_panel.bin', 'lift_inner.bin', 'corr_left.bin', 'corr_right.bin', 'lift_sprites.bin', 'lift.inc') {
+    if (-not (Test-Path "assets\im\$f")) {
+        throw "assets\im\$f is missing: record a lift ride with tools\im\record_lift.py and run tools\im\extract_lift.py (see README)"
+    }
+}
 if (-not (Test-Path $exo)) { throw "Exomizer is missing: build it with tools\build-exomizer.bat (see README)" }
 
 python tools\gen_assets.py

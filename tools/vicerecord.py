@@ -10,12 +10,15 @@ usage: vicerecord.py IMAGE OUTDIR [--ntsc] [--warp-load S] [--minutes M]
                                           cursor keys + space = joystick 2)
 """
 import argparse
-import re
 import json
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vicesession import parse_mem  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 X64SC = ROOT / "tools/vice/GTK3VICE-3.9-win64/bin/x64sc.exe"
@@ -84,12 +87,7 @@ def main():
                     return buf.decode(errors="replace")
 
         def mem(start, end):
-            # rows look like ">C:d000  ca 5e ..  ASCII"; the prompt of the stop can
-            # precede the first row on the same line, so search, don't anchor
-            vals = []
-            for m in re.finditer(r">C:([0-9a-f]{4})((?:\s+[0-9a-f]{2})+)", cmd(f"m {start:04x} {end:04x}")):
-                vals += [int(b, 16) for b in m.group(2).split()]
-            return vals[: end - start + 1]
+            return parse_mem(cmd(f"m {start:04x} {end:04x}"), start, end)
 
         time.sleep(a.warp_load)
         cmd("warp off")

@@ -24,6 +24,21 @@ PORT = 6510
 BINPORT = 6502                  # VICE binary monitor (joystick control)
 
 
+def parse_mem(out, start, end):
+    """Bytes of a monitor "m" listing. Rows look like
+    ">C:4000  0e 0c 1e 1c  12 10 16 14  ...   nl^\\rpvt": hex groups are
+    separated by 2 spaces, the text column by 3, and that text can look like
+    hex ("ca", "fd"), so only the part before the 3 spaces counts. The prompt
+    of a stop can precede the first row on the same line."""
+    vals = []
+    for m in re.finditer(r">C:([0-9a-f]{4})  (.*)", out):
+        hexpart = m.group(2).split("   ")[0]
+        vals += [int(b, 16) for b in hexpart.split()]
+    if len(vals) < end - start + 1:
+        raise SystemExit(f"monitor memory read ${start:04x}-${end:04x}: got {len(vals)} bytes")
+    return vals[: end - start + 1]
+
+
 class Vice:
     def __init__(self, image, ntsc=False, warp=False, sound=False):
         try:
@@ -116,10 +131,7 @@ class Vice:
     def peek(self, start, end=None):
         end = start if end is None else end
         out = self.cmd(f"m {start:04x} {end:04x}")
-        vals = []
-        for m in re.finditer(r">C:([0-9a-f]{4})((?:\s+[0-9a-f]{2})+)", out):
-            vals += [int(b, 16) for b in m.group(2).split()]
-        return vals[: end - start + 1]
+        return parse_mem(out, start, end)
 
     def poke(self, addr, *vals):
         self.cmd(f"> {addr:04x} " + " ".join(f"{v:02x}" for v in vals))
