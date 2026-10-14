@@ -9,3 +9,12 @@ __pycache__/
 
 tools/exomizer/
 tools/dl_exomizer/
+
+# the original game (disk image, snapshots, RAM dumps) stays out of the repository
+assets/im_source/
+assets/im/ram_*.bin
+*.vsf
+*.d64.orig
+assets/im/rec2_samples.json
+assets/im/room_test*
+assets/im/charset_elevator.bin

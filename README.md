@@ -53,11 +53,7 @@ The toolchain lives in `tools\`: 64tass 1.60, VICE 3.9 and Exomizer 3.1.2. You a
 The program spans `$0801-$f77f`, so `build.ps1` packs `build\vipp_full.prg` with Exomizer (`sfx`) into one self-unpacking `build\vipp.prg`.
 
 - **Exomizer:** no Windows binaries are offered any more. Download the source (`https://bitbucket.org/magli143/exomizer/get/3.1.2.zip`), unpack it into `tools\dl_exomizer\`, and run `tools\build-exomizer.bat` (needs Visual Studio 2022 C++ tools).
-- **Impossible Mission data:** this repository is private (Epyx data, private event use only). `assets/im/` holds the extracted data the build uses; `assets/im_source/` what it was extracted from: the original `impossible_mission.d64` and VICE snapshots of the game (`lift_top.vsf`: the lift at the top of a shaft, `room29.vsf`: a room, `search.vsf`: searching, `terminal.vsf`: a security terminal), the recorded lift ride and a room dump. To extract again:
-  - `python tools/im/extract.py assets/im/ram_005.bin --room assets/im_source/room_restore` (agent, robots, charsets, speech)
-  - `python tools/im/record_lift.py assets/im_source/lift_top.vsf DIR`, then `python tools/im/extract_lift.py DIR` (the lift; the recording is in `assets/im_source/lift_ride`)
-  - `python tools/im/extract_rooms.py assets/im_source/room29.vsf`, `extract_terminal.py assets/im_source/terminal.vsf`, `extract_search.py assets/im_source/search.vsf`
-  The build stops with a clear message if anything is missing.
+- **Impossible Mission data:** `assets/im/` holds only the pieces extracted from the original game that the build uses (Epyx data, private event use only). The original game itself is not in the repository. The tools in `tools/im/` extract the pieces again from your own copy: `extract.py` (from a RAM dump of a room), `record_lift.py` + `extract_lift.py`, `extract_rooms.py`, `extract_terminal.py` and `extract_search.py` (from VICE snapshots of the game). The build stops with a clear message if anything is missing.
 
 Test builds (64tass `-D`):
 
