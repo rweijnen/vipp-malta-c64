@@ -128,6 +128,7 @@ C_ROOM      = 8                 ; room index (0-4), X (word), Y, facing: enter t
 C_TERM      = 9                 ; terminal (0-4): show it (C_STAND to wait, C_BACK to leave)
 C_BACK      = 10                ; back from the terminal into the room
 C_SEARCH    = 11                ; ticks: search the furniture in front of the agent
+C_ONDEATH   = 12                ; address (word): where the script goes on after a death
 
             * = $7000
 mission_run
@@ -147,6 +148,10 @@ mission_run
             sta $d020
             sta sh_pos
             sta speaking
+            sta dying
+            lda #$5a
+            sta rnd2
+            lda #0
             ldx #$7f            ; the speech engine's table at $0800 (the demo's
 -           lda speech_table,x  ; BASIC stub was there: only needed to load)
             sta $0800,x
@@ -235,30 +240,40 @@ irq_main
             jsr lift_frame      ; scrolling first: it races the raster
 +           jsr check_space
             lda speaking        ; while speaking, the game waits (as the
-            beq +               ; original: nothing else may touch $d418)
+            beq _notalk         ; original: nothing else may touch $d418)
             lda #$ff
             jsr SPEECH
             lsr a
-            bcs ++              ; still busy
+            bcs _end            ; still busy
             jsr speech_done
             jsr script_next
-            jmp ++
-+           dec tick_ctr
-            bne +
+            jmp _end
+_notalk     lda dying           ; dying: only that, every frame
+            beq _alive
+            jsr death_frame
+            jmp _end
+_alive      dec tick_ctr
+            bne _end
             lda #TICK_FRAMES
             sta tick_ctr
             jsr script_tick
+            lda dying           ; (a hit in the script's move? next tick)
+            bne _end
             lda scene
             cmp #SC_ROOM
             bne _norob
             jsr robots_tick
+            jsr zap_tick
             jsr robots_draw
+            jsr hit_check
+            lda dying
+            bne _end
 _norob      lda scene
             cmp #SC_TERM
-            beq +
+            beq _end
             jsr agent_draw
             jsr footsteps
-+           jsr next_irq
+_end        jsr next_irq
             lda #$ff
             sta $d019
             pla
@@ -868,6 +883,7 @@ scene_lift
 ; Sprites of the lift: 0 the lines beside the car (multicolor, Y-expanded),
 ; 6 the panel marker, 7 the car hanger.
 lift_sprites
+            jsr lift_sprites_back
             lda #LIFTSPR_PTR
             sta M_SCREEN + $3f8
             lda #LIFTSPR_PTR + 1
@@ -948,6 +964,8 @@ script_next
             beq _back
             cmp #C_SEARCH
             beq _search
+            cmp #C_ONDEATH
+            beq _ondeath
             ; unknown command: show it plainly (red border) and stop
             lda #2
             sta $d020
@@ -997,6 +1015,14 @@ _room       iny                 ; room, X, Y, facing
             sta ag_face
             lda #FR_STAND
             sta ag_frame
+            lda ag_x            ; the door: where he comes back after dying
+            sta entry_x
+            lda ag_x + 1
+            sta entry_x + 1
+            lda ag_y
+            sta entry_y
+            lda ag_face
+            sta entry_face
             lda #6
             jsr advance
             jsr scene_room
@@ -1020,6 +1046,15 @@ _search     iny
             jsr advance
             pla
             jmp search_start
+_ondeath    iny
+            lda (sc_p),y
+            sta death_go
+            iny
+            lda (sc_p),y
+            sta death_go + 1
+            lda #3
+            jsr advance
+            jmp script_next
 _say        iny                 ; the phrase
             lda (sc_p),y
             pha
@@ -1147,7 +1182,9 @@ run_step    lda #RUN_PX
             sbc (sc_p),y
             bcs _done
             rts
-_left       lda (sc_p),y        ; facing left: done when target >= ag_x
+_left       lda ag_x + 1        ; facing left: done when past X 0 (negative)
+            bmi _done
+            lda (sc_p),y        ; or when target >= ag_x
             cmp ag_x
             iny
             lda (sc_p),y
@@ -1373,158 +1410,9 @@ row_hi      .for r := 0, r < 26, r += 1
             .next
 tiles       .fill 16
 
-; --- the script (stage 2): down the shaft, through a corridor into a room and
-; back, further down, then from the top again --------------------------------------
-mission_script
-            .byte C_SCENE, SC_INTRO, 0          ; the game's start, as the original:
-            .word LIFT_AGENT_X                  ; "Another visitor." (phrase 2),
-            .byte LIFT_AGENT_Y, FACE_RIGHT      ; 32 frames, "Stay a while...
-            .byte C_STAND, 8                    ; stay forever!" (phrase 3)
-            .byte C_SAY, 2
-            .byte C_STAND, 11
-            .byte C_SAY, 3
-            .byte C_SCENE, SC_LIFT, $ff         ; then the pocket computer appears
-            .word LIFT_AGENT_X
-            .byte LIFT_AGENT_Y, FACE_RIGHT
-            .byte C_STAND, 15
-
-            ; room 18: out to the right, in through its left door (row 6)
-            .byte C_RUN
-            .word 340
-            .byte C_ROOM, 0
-            .word 4
-            .byte floor_y(6), FACE_RIGHT
-            .byte C_RUN
-            .word 49
-            .byte C_STAND, 6
-            .byte C_TERM, 0
-            .byte C_STAND, 80
-            .byte C_BACK
-            .byte C_STAND, 6
-            .byte C_FACE, FACE_LEFT
-            .byte C_RUN
-            .word 4
-            .byte C_SCENE, SC_LIFT, $ff
-            .word 330
-            .byte LIFT_AGENT_Y, FACE_LEFT
-            .byte C_RUN
-            .word LIFT_AGENT_X
-            .byte C_STAND, 8
-
-            ; room 24: down, out to the left, in through its right door (row 6)
-            .byte C_RIDE, 40 - CAR_ROW
-            .byte C_STAND, 8
-            .byte C_FACE, FACE_LEFT
-            .byte C_RUN
-            .word 10
-            .byte C_ROOM, 1
-            .word 330
-            .byte floor_y(6), FACE_LEFT
-            .byte C_RUN
-            .word 285
-            .byte C_STAND, 6
-            .byte C_TERM, 1
-            .byte C_STAND, 80
-            .byte C_BACK
-            .byte C_STAND, 6
-            .byte C_FACE, FACE_RIGHT
-            .byte C_RUN
-            .word 340
-            .byte C_SCENE, SC_LIFT, $ff
-            .word LIFT_AGENT_X - 5 * 32
-            .byte LIFT_AGENT_Y, FACE_RIGHT
-            .byte C_RUN
-            .word LIFT_AGENT_X
-            .byte C_STAND, 8
-
-            ; room 23: down, out to the right, in through its left door (row 24)
-            .byte C_RIDE, 76 - CAR_ROW
-            .byte C_STAND, 8
-            .byte C_RUN
-            .word 340
-            .byte C_ROOM, 2
-            .word 4
-            .byte floor_y(24), FACE_RIGHT
-            .byte C_RUN
-            .word 59
-            .byte C_STAND, 6
-            .byte C_TERM, 2
-            .byte C_STAND, 80
-            .byte C_BACK
-            .byte C_STAND, 6
-            .byte C_RUN
-            .word 174
-            .byte C_SEARCH, 40
-            .byte C_STAND, 6
-            .byte C_FACE, FACE_LEFT
-            .byte C_RUN
-            .word 4
-            .byte C_SCENE, SC_LIFT, $ff
-            .word 330
-            .byte LIFT_AGENT_Y, FACE_LEFT
-            .byte C_RUN
-            .word LIFT_AGENT_X
-            .byte C_STAND, 8
-
-            ; room 29: down, out to the left, in through its right door (row 24)
-            .byte C_RIDE, 112 - CAR_ROW
-            .byte C_STAND, 8
-            .byte C_FACE, FACE_LEFT
-            .byte C_RUN
-            .word 10
-            .byte C_ROOM, 3
-            .word 330
-            .byte floor_y(24), FACE_LEFT
-            .byte C_RUN
-            .word 270
-            .byte C_STAND, 6
-            .byte C_TERM, 3
-            .byte C_STAND, 80
-            .byte C_BACK
-            .byte C_STAND, 6
-            .byte C_RUN
-            .word 220
-            .byte C_FLIP
-            .byte C_RUN
-            .word 140
-            .byte C_STAND, 10
-            .byte C_FACE, FACE_RIGHT
-            .byte C_RUN
-            .word 340
-            .byte C_SCENE, SC_LIFT, $ff
-            .word LIFT_AGENT_X - 5 * 32
-            .byte LIFT_AGENT_Y, FACE_RIGHT
-            .byte C_RUN
-            .word LIFT_AGENT_X
-            .byte C_STAND, 8
-
-            ; room 0: down, out to the right, in through its left door (row 24)
-            .byte C_RIDE, 148 - CAR_ROW
-            .byte C_STAND, 8
-            .byte C_RUN
-            .word 340
-            .byte C_ROOM, 4
-            .word 4
-            .byte floor_y(24), FACE_RIGHT
-            .byte C_RUN
-            .word 39
-            .byte C_FLIP
-            .byte C_RUN
-            .word 124
-            .byte C_STAND, 6
-            .byte C_TERM, 4
-            .byte C_STAND, 80
-            .byte C_BACK
-            .byte C_STAND, 10
-            .byte C_FACE, FACE_LEFT
-            .byte C_RUN
-            .word 119
-            .byte C_FLIP
-            .byte C_RUN
-            .word 4
-            .byte C_GOTO
-            .word mission_script
-
+; --- the script: tools/im/mission_script.py (simulated against the robots
+; when building: the build fails on a death that was not planned) ----------
+            .include "../build/mission_script.inc"
 
             .align 256
 rev_bits                        ; bit-reversed bytes, for mirroring hires sprites
@@ -1577,6 +1465,9 @@ mission_code_end
             .include "../build/mission_rooms_9000.inc"
 speech_table .binary "../assets/im/speech_engine.bin", 0, $80     ; -> $0800 at start
 lift_panel  .binary "../assets/im/lift_panel.bin"       ; 400 chars, 400 colours
+zap_blocks  .binary "../assets/im/icon_sprites.bin", 4 * 64, 4 * 64   ; the bolt: blocks $14-$17
+lift_spr_stash .binary "../assets/im/lift_sprites.bin"
+term_spr_stash .binary "../assets/im/terminal_sprites.bin"
 lift_inner  .binary "../assets/im/lift_inner.bin"       ; 15 x 6 chars, 15 x 6 colours
 corr_left   .binary "../assets/im/corr_left.bin"        ; 8 x 17 chars, 8 x 17 colours
 corr_right  .binary "../assets/im/corr_right.bin"
@@ -1600,6 +1491,7 @@ corr_right  .binary "../assets/im/corr_right.bin"
 
 ; --- mission part 2 and its data ------------------------------------------------
             .include "mission_rooms.asm"
+            .include "mission_danger.asm"
             .include "../build/mission_rooms.inc"
             .cerror * > $d000, "mission part 2 beyond $cfff"
 

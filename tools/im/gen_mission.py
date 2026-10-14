@@ -61,8 +61,11 @@ def main():
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text("".join(out))
     print(f"mission: 28 agent frames, somersault moves {flip_dx} px")
-    gen_rooms()
+    signed = lambda v: v - 256 if v > 127 else v
+    agent = ([signed(v) for v in dx[3]], [signed(v) for v in dy[3]])
+    room_robots = gen_rooms()
     gen_terminals()
+    gen_script(room_robots, agent)
 
 
 # --- rooms ---------------------------------------------------------------------
@@ -187,6 +190,7 @@ def gen_rooms():
     (ROOT / "build" / "mission_rooms_9000.inc").write_text("".join(data_9000) or "; (none)\n")
     size = sum(len(rle(rooms[str(n)]["screen"]) + rle(rooms[str(n)]["colour"])) for n in ROOM_ORDER)
     print(f"mission: {len(ROOM_ORDER)} rooms, {size} bytes packed ({0x1000 - budget_d000} at $d000)")
+    return [[r for r in robots[4 * i:4 * i + cols["nrob"][i]]] for i in range(len(ROOM_ORDER))]
 
 
 # --- terminals -------------------------------------------------------------------------
@@ -207,6 +211,19 @@ def gen_terminals():
     (ROOT / "build" / "mission_term.inc").write_text("".join(out))
     (ROOT / "build" / "charset_lift_vipp.bin").write_bytes(terminals.charset())
     print(f"mission: {len(screens)} terminals")
+
+
+# --- the script ------------------------------------------------------------------------
+def gen_script(room_robots, agent):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import mission_script                 # noqa: E402
+    (ROOT / "build" / "mission_script.inc").write_text(mission_script.emit())
+    deaths = mission_script.check(room_robots, agent)
+    if len(deaths) != mission_script.PLANNED_DEATHS:
+        mission_script.check(room_robots, agent, verbose=True)
+        sys.exit(f"mission script: {len(deaths)} deaths in a loop, planned {mission_script.PLANNED_DEATHS}: "
+                 + "; ".join(f"room index {d[0]} tick {d[1]} x {d[2]} ({d[3]})" for d in deaths))
+    print(f"mission: script ok ({len(deaths)} planned death per loop)")
 
 
 if __name__ == "__main__":

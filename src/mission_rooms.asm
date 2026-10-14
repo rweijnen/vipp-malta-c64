@@ -135,7 +135,7 @@ draw_room   lda #$0b            ; display off while drawing
             sta $d01c
             lda #0
             sta $d015
-            rts
+            jmp danger_room
 
 ; Enter room room_cur: draw it, the robots at their places.
 scene_room  lda #SC_ROOM
@@ -189,6 +189,7 @@ robots_init lda room_cur
             lda #0
             sta rbstate,x
             sta rbtimer,x
+            sta rbcool,x
             inc rb_k
             inx
             cpx #4
@@ -206,6 +207,10 @@ _robot      lda rbstate,x
             beq _walk
             cmp #1
             beq _pause
+            cmp #3              ; firing (zap_tick)
+            bne +
+            jmp _next
++
             ; turning: a frame per tick to the other side
             lda rbframe,x
             cmp rbtarget,x
@@ -319,13 +324,14 @@ rbmax_lo    .fill 4
 rbmax_hi    .fill 4
 rbspeed     .fill 4
 rbframe     .fill 4
-rbstate     .fill 4             ; 0 walking, 1 waiting at the end, 2 turning
+rbstate     .fill 4             ; 0 walking, 1 waiting at the end, 2 turning, 3 firing
 rbtimer     .fill 4
 rbtarget    .fill 4
 
 ; --- the security terminals -------------------------------------------------------
 ; Terminal A (0-4): the original's terminal screen with a Parallels product.
 scene_term  pha
+            jsr term_sprites_back
             lda #SC_TERM
             sta scene
             lda #$0b            ; display off while drawing
@@ -419,16 +425,19 @@ search_start
             sta M_CHARSET,x
             dex
             bpl -
-            ; where: 6 rows above the agent's floor, around his middle
-            lda ag_y            ; floor row = (y - 10) / 8; top = floor - 6
+            ; where: 8 rows above the agent's floor (clear of furniture up to
+            ; 4 rows high, as the candy machine), around his middle
+            lda ag_y            ; floor row = (y - 10) / 8; top = floor - 8
             sec
             sbc #10
             lsr a
             lsr a
             lsr a
             sec
-            sbc #6
-            tax
+            sbc #8
+            bcs +
+            lda #0              ; top floors: the screen's first row
++           tax
             lda row_lo,x
             sta box_pos
             lda row_hi,x
