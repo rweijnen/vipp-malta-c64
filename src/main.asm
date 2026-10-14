@@ -118,6 +118,10 @@ RIPPLE_LINE = 244               ; first rippled line (243 is a badline)
             .null $9e, format("%d", start)
 +           .word 0
 
+; $080d-$0dff is kept free for the Impossible Mission speech engine (it runs
+; at $0880-$0cff and builds its tables at $0800-$087f): the start-up code and
+; the IRQs up to irq_exit live at $4000 (free RAM above the VIC bank 0).
+            * = $4000
 ; ---------------------------------------------------------------------------
 start
             sei
@@ -762,8 +766,11 @@ irq_exit
             pla
             rti
 
+low_code_end
+            .cerror low_code_end > $5000, "start-up code beyond $4fff (the music is at $5000)"
+
 ; $d011 value for raster line n in the FLD area: YSCROLL = (n - 1) & 7
-            .align 256
+            * = $0e00
 fld_d011
             .for n = 0, n < 256, n += 1
             .byte $18 | ((n + 7) & 7)

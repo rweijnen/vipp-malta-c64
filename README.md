@@ -8,7 +8,7 @@ A small PAL demo for real Commodore 64 hardware (made for the Commodore 64 Ultim
 - laser and explosion **sound effects** on SID voice 3, which is borrowed from the music's drums the way games did it
 - a 2×2 multicolor scroller in an Ocean-style gold gradient, greeting all VIPP members, with a rippling **water reflection** below it (flipped, half height, orange fading into purple)
 - music: *Commando* by Rob Hubbard (from HVSC)
-- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 2 has the lift ride down the shaft (original scrolling and hum), the walk through a corridor into a room and back.
+- **VIPP Mission** (press **Space**, Space again returns): an *Impossible Mission* (Epyx, 1984) mode built from the original game's graphics, sounds and speech. Work in progress: stage 2 has the lift ride down the shaft (original scrolling and hum), the walk through a corridor into a room and back, and the original speech intro ("Another visitor... stay a while... stay forever!"; boosted on 8580 SIDs, which play volume-register speech much quieter: use a 6581 for the original level).
 
 ## Run it
 

@@ -15,7 +15,10 @@ Data layout (VIC bank 1, $4000-$7fff), found by tracing the game:
   robots   sprite blocks $c0-$c6, multicolor (colour 13, mc 6 / 3)
   icons    sprite blocks $10-$1f (zap bolt $14-$17)
   charsets $4800 (elevator/corridor), $5000 (rooms), multicolor
-  speech   $e000-$f77f (played through the volume register, code $7d00-)
+  speech   data $e000-$f77f; the engine $0800-$0cff (Electronic Speech
+           Systems: NMI driven by CIA 2 timer B, 4 bit samples through $d418).
+           jsr $0880 with A = phrase starts it, A = $ff returns busy in bit 0,
+           A = $fe stops. The game: phrase 2 + 3 at the start ($39f4).
 
 usage: extract.py RAMDUMP [--room SNAPDIR] [--out assets/im]
 """
@@ -165,7 +168,10 @@ def main():
     (out / "charset_rooms.bin").write_bytes(bytes(ram.m[0x5000:0x5800]))
     (out / "charset_elevator.bin").write_bytes(bytes(ram.m[0x4800:0x5000]))
     (out / "speech.bin").write_bytes(bytes(ram.m[0xe000:0xf780]))
-    (out / "speech_player_7d00.bin").write_bytes(bytes(ram.m[0x7d00:0x8000]))
+    engine = bytes(ram.m[0x0800:0x0d00])
+    if engine[0x80:0x83] != bytes([0x4c, 0x2f, 0x0c]):
+        raise SystemExit("speech engine not found at $0880 (expected jmp $0c2f): not the expected game version")
+    (out / "speech_engine.bin").write_bytes(engine)
 
     # preview sheet
     sc = 3

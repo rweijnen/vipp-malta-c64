@@ -57,6 +57,9 @@ FR_FLIP_END = 16
 
 SC_ROOM     = 0                 ; scenes
 SC_LIFT     = 1
+SC_INTRO    = 2                 ; the full screen shaft of the game's start (no panel)
+
+SPEECH      = $0880             ; the original speech engine: A = phrase, $ff = busy?, $fe = stop
 
 ; lift scene layout (as in the original)
 VIEW_ROWS   = 15                ; shaft view rows 0-14, panel rows 15-24
@@ -106,6 +109,8 @@ rnd         = $3c
 fill_c      = $3d
 gk          = $3e
 snd_hold    = $3f
+speaking    = $0f               ; a phrase is playing (the game waits, as the original)
+sid_8580    = $0e               ; 1: an 8580 (or a SID that behaves like one): boosted speech
 
 ; script commands
 C_STAND     = 0                 ; ticks
@@ -115,6 +120,7 @@ C_FLIP      = 3                 ; somersault in the facing direction
 C_GOTO      = 4                 ; address (word)
 C_SCENE     = 5                 ; scene, shaft row ($ff: keep), X (word), Y, facing
 C_RIDE      = 6                 ; shaft row: ride the lift until view row 0 shows it
+C_SAY       = 7                 ; phrase: speak it and wait until it is done
 
             * = $7000
 mission_run
@@ -133,6 +139,13 @@ mission_run
             lda #0
             sta $d020
             sta sh_pos
+            sta speaking
+            ldx #$7f            ; the speech engine's table at $0800 (the demo's
+-           lda speech_table,x  ; BASIC stub was there: only needed to load)
+            sta $0800,x
+            dex
+            bpl -
+            jsr sid_detect
 
             lda #<mission_script
             sta sc_p
@@ -153,6 +166,12 @@ mission_run
             lda #0
             sta want_mode
             sei
+            lda speaking
+            beq +
+            lda #$fe            ; stop the phrase
+            jsr SPEECH
+            jsr speech_done
++
             lda #0
             sta $d01a
             sta $d015
@@ -208,7 +227,16 @@ irq_main
             sta $d018
             jsr lift_frame      ; scrolling first: it races the raster
 +           jsr check_space
-            dec tick_ctr
+            lda speaking        ; while speaking, the game waits (as the
+            beq +               ; original: nothing else may touch $d418)
+            lda #$ff
+            jsr SPEECH
+            lsr a
+            bcs ++              ; still busy
+            jsr speech_done
+            jsr script_next
+            jmp ++
++           dec tick_ctr
             bne +
             lda #TICK_FRAMES
             sta tick_ctr
@@ -488,7 +516,11 @@ _wall       ldy #16
             sta (dst_c),y
             ldy #16
             sta (dst_c),y
-            ; corridors
+            ; corridors (not on the intro screen: the original shows them
+            ; only once the pocket computer is there)
+            lda scene
+            cmp #SC_INTRO
+            beq _cdone
             ldx #0
 _corr       lda corridor_table,x
             cmp #$ff
@@ -681,6 +713,125 @@ scene_room
             sta $d015
             jmp scene_common
 
+; SID model, the well-known way: voice 3 at frequency $ffff with the test bit,
+; then the sawtooth started and OSC3 read right away: a 6581 gives 3, an
+; 8580 gives 2 (its waveform output comes one cycle later). Bit 0 tells.
+sid_detect  lda #$ff
+            sta $d412           ; test bit (the other bits do not matter)
+            sta $d40e
+            sta $d40f
+            lda #$20            ; sawtooth, test bit off: the oscillator starts
+            sta $d412
+            lda $d41b
+            sta gt
+            ldx #1              ; bit 0 clear: 8580
+            lsr a
+            bcc +
+            dex
++           stx sid_8580
+            lda #$08            ; voice 3 silent again
+            sta $d412
+            rts
+
+; The speech plays 4 bit samples through the volume register. The original
+; silences the voices first (test bit only): fine on a 6581, whose output has
+; a DC offset the volume scales, but an 8580 (and FPGA SIDs) has almost none,
+; and the speech is 6x quieter there (measured in VICE). "Digi boost": all
+; three voices give a constant full output (test bit + pulse: the pulse output
+; stays high; gate on, sustain 15), which the volume register then scales.
+speech_boost
+            lda sid_8580
+            bne +
+            lda #$08            ; 6581: as the original, voices silenced
+            sta $d404
+            sta $d40b
+            sta $d412
+            rts
++           ldx #14
+-           lda #$00
+            sta $d405,x         ; attack 0, decay 0
+            lda #$f0
+            sta $d406,x         ; sustain 15, release 0
+            lda #$49
+            sta $d404,x         ; pulse + test + gate
+            txa
+            sec
+            sbc #7
+            tax
+            bcs -
+            rts
+
+; After a phrase: the voices off again, the NMI vector back to the demo's
+; (RESTORE does nothing), CIA 2 interrupts off, the volume for the game sounds.
+speech_done lda #$08            ; test bit only: no output (as the original)
+            sta $d404
+            sta $d40b
+            sta $d412
+            lda #0
+            sta speaking
+            lda #<nmi
+            sta $fffa
+            lda #>nmi
+            sta $fffb
+            lda #$7f
+            sta $dd0d
+            lda $dd0d
+            lda #5
+            sta $d418
+            rts
+
+; The start of the original: the shaft over the whole screen, the agent in
+; the car at the top, no pocket computer yet (it appears after the speech).
+scene_intro
+            lda #SC_INTRO
+            sta scene
+            lda #$0b            ; display off while drawing
+            sta $d011
+            ldx #0              ; the shaft, all 25 rows
+-           txa
+            pha
+            clc
+            adc sh_pos
+            jsr gen_row
+            pla
+            tax
+            inx
+            cpx #25
+            bne -
+            jsr draw_inner_top
+            ldx #CAR_ROW        ; the car and the shaft below it (rows 4-14)
+-           txa
+            asl a
+            sta gt
+            asl a
+            clc
+            adc gt              ; * 6
+            jsr put_inner
+            inx
+            cpx #VIEW_ROWS
+            bne -
+-           lda #14 * 6         ; further down: the shaft as in row 14
+            jsr put_inner
+            inx
+            cpx #25
+            bne -
+            lda #0
+            sta sh_phase
+            lda #LIFT_BG
+            sta $d021
+            lda #LIFT_MC1
+            sta $d022
+            lda #LIFT_MC2
+            sta $d023
+            lda #D018_LIFT
+            sta $d018
+            jsr lift_sprites
+            lda #160            ; the side lines on the left, as in the original's start
+            sta $d000
+            lda #%10000001      ; no panel marker
+            sta $d015
+            jmp scene_common
+
 scene_lift
             lda #SC_LIFT
             sta scene
@@ -735,8 +886,14 @@ scene_lift
             sta $d023
             lda #D018_LIFT
             sta $d018
-            ; sprites: 0 the lines beside the car (multicolor, Y-expanded),
-            ; 6 the panel marker, 7 the car hanger
+            jsr lift_sprites
+            lda #%11000001
+            sta $d015
+            jmp scene_common
+
+; Sprites of the lift: 0 the lines beside the car (multicolor, Y-expanded),
+; 6 the panel marker, 7 the car hanger.
+lift_sprites
             lda #LIFTSPR_PTR
             sta M_SCREEN + $3f8
             lda #LIFTSPR_PTR + 1
@@ -770,8 +927,8 @@ scene_lift
             lda #%00000001
             sta $d01c
             sta $d017
-            lda #%11000001
-            sta $d015
+            rts
+
 scene_common
             lda #$d8            ; multicolor text, 40 columns
             sta $d016
@@ -807,6 +964,8 @@ script_next
             beq _scene
             cmp #C_RIDE
             beq _ride
+            cmp #C_SAY
+            beq _say
             ; unknown command: show it plainly (red border) and stop
             lda #2
             sta $d020
@@ -839,6 +998,17 @@ _goto       iny
             sta sc_p + 1
             stx sc_p
             jmp script_next
+_say        iny                 ; the phrase
+            lda (sc_p),y
+            pha
+            jsr speech_boost
+            lda #2
+            jsr advance
+            pla
+            jsr SPEECH
+            lda #1
+            sta speaking
+            rts
 _ride       iny
             lda (sc_p),y
             sta sh_target
@@ -880,9 +1050,13 @@ _scene      iny                 ; scene, shaft row, X, Y, facing
             pla
             cmp #SC_LIFT
             beq +
+            cmp #SC_INTRO
+            beq ++
             jsr scene_room
             jmp script_next
 +           jsr scene_lift
+            jmp script_next
++           jsr scene_intro
             jmp script_next
 
 advance     clc                 ; sc_p += A
@@ -1160,10 +1334,10 @@ corridor_table
             .byte 172, CORR_L, 7, 0
             .byte $ff
 
-row_lo      .for r := 0, r < VIEW_ROWS + 1, r += 1
+row_lo      .for r := 0, r < 26, r += 1
             .byte <(M_SCREEN + r * 40)
             .next
-row_hi      .for r := 0, r < VIEW_ROWS + 1, r += 1
+row_hi      .for r := 0, r < 26, r += 1
             .byte >(M_SCREEN + r * 40)
             .next
 tiles       .fill 16
@@ -1171,7 +1345,14 @@ tiles       .fill 16
 ; --- the script (stage 2): down the shaft, through a corridor into a room and
 ; back, further down, then from the top again --------------------------------------
 mission_script
-            .byte C_SCENE, SC_LIFT, 0
+            .byte C_SCENE, SC_INTRO, 0          ; the game's start, as the original:
+            .word LIFT_AGENT_X                  ; "Another visitor." (phrase 2),
+            .byte LIFT_AGENT_Y, FACE_RIGHT      ; 32 frames, "Stay a while...
+            .byte C_STAND, 8                    ; stay forever!" (phrase 3)
+            .byte C_SAY, 2
+            .byte C_STAND, 11
+            .byte C_SAY, 3
+            .byte C_SCENE, SC_LIFT, $ff         ; then the pocket computer appears
             .word LIFT_AGENT_X
             .byte LIFT_AGENT_Y, FACE_RIGHT
             .byte C_STAND, 25
@@ -1249,6 +1430,7 @@ room_test_screen
             .binary "../assets/im/room_test_screen.bin"
 room_test_colram
             .binary "../assets/im/room_test_colram.bin"
+speech_table .binary "../assets/im/speech_engine.bin", 0, $80     ; -> $0800 at start
 lift_panel  .binary "../assets/im/lift_panel.bin"       ; 400 chars, 400 colours
 lift_inner  .binary "../assets/im/lift_inner.bin"       ; 15 x 6 chars, 15 x 6 colours
 corr_left   .binary "../assets/im/corr_left.bin"        ; 8 x 17 chars, 8 x 17 colours
@@ -1265,3 +1447,12 @@ corr_right  .binary "../assets/im/corr_right.bin"
             * = M_PANELCHR
             .binary "../assets/im/charset_panel.bin"
             .cerror * != $c000, "panel charset must be 2 KB"
+
+; --- the original speech engine and its speech data ------------------------------
+            * = SPEECH
+            .binary "../assets/im/speech_engine.bin", $80
+            .cerror * != $0d00, "speech engine must end at $0cff"
+
+            * = $e000           ; RAM under the KERNAL (both modes run with $01 = $35)
+            .binary "../assets/im/speech.bin"
+            .cerror * != $f780, "speech data must be $e000-$f77f"

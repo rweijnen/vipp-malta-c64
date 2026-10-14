@@ -40,7 +40,9 @@ def parse_mem(out, start, end):
 
 
 class Vice:
-    def __init__(self, image, ntsc=False, warp=False, sound=False):
+    def __init__(self, image, ntsc=False, warp=False, sound=False, wav=None, sid_model=None):
+        """wav: record the sound to this WAV file (normal speed, no warp).
+        sid_model: VICE SidModel (0 = 6581, 1 = 8580)."""
         try:
             socket.create_connection(("127.0.0.1", PORT), timeout=0.5).close()
             raise SystemExit(f"port {PORT} is in use: close the other VICE (x64sc) first")
@@ -52,8 +54,12 @@ class Vice:
                 "-binarymonitor", "-binarymonitoraddress", f"ip4://127.0.0.1:{BINPORT}",
                 # a joystick device on both ports, else VICE ignores joyport values
                 "-joydev1", "2", "-joydev2", "2"]
-        if not sound:
+        if wav is not None:
+            args += ["-sounddev", "wav", "-soundarg", str(Path(wav).resolve())]
+        elif not sound:
             args += ["-sounddev", "dummy"]
+        if sid_model is not None:
+            args += ["-sidmodel", str(sid_model)]
         if warp:
             args.append("-warp")
         if image is not None:
