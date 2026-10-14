@@ -127,7 +127,7 @@ C_SAY       = 7                 ; phrase: speak it and wait until it is done
 C_ROOM      = 8                 ; room index (0-4), X (word), Y, facing: enter the room
 C_TERM      = 9                 ; terminal (0-4): show it (C_STAND to wait, C_BACK to leave)
 C_BACK      = 10                ; back from the terminal into the room
-C_SEARCH    = 11                ; ticks: search the furniture in front of the agent
+C_SEARCH    = 11                ; ticks, result (0 nothing, 1 VIPP find): search the furniture
 C_ONDEATH   = 12                ; address (word): where the script goes on after a death
 
             * = $7000
@@ -158,6 +158,7 @@ mission_run
             dex
             bpl -
             jsr sid_detect
+            jsr map_reset       ; every loop starts with an empty map
 
             lda #<mission_script
             sta sc_p
@@ -326,6 +327,7 @@ lift_frame
             jsr copy_rows
             jsr draw_inner_top
             jsr lift_hum
+            jsr map_marker
             lda #2
             sta sh_phase
             rts
@@ -337,6 +339,10 @@ _bottom     ldx #7              ; rows 7-13 <- rows 8-14
             adc #VIEW_ROWS - 1
             ldx #VIEW_ROWS - 1
             jsr gen_row         ; the new row at the bottom
+            jsr map_reveal      ; the map: more of the shaft?
+            bcc +
+            jsr map_show
++
             lda #1
             sta sh_phase
             lda sh_pos
@@ -876,6 +882,9 @@ scene_lift
             lda #D018_LIFT
             sta $d018
             jsr lift_sprites
+            jsr map_reveal      ; the pocket computer's map
+            jsr map_show
+            jsr map_marker
             lda #%11000001
             sta $d015
             jmp scene_common
@@ -1023,6 +1032,7 @@ _room       iny                 ; room, X, Y, facing
             sta entry_y
             lda ag_face
             sta entry_face
+            jsr map_room        ; a visited room on the map
             lda #6
             jsr advance
             jsr scene_room
@@ -1039,10 +1049,13 @@ _back       lda #1
             jsr advance
             jsr scene_back
             jmp script_next
-_search     iny
+_search     iny                 ; ticks, result
             lda (sc_p),y
             pha
-            lda #2
+            iny
+            lda (sc_p),y
+            sta search_res
+            lda #3
             jsr advance
             pla
             jmp search_start
@@ -1466,6 +1479,8 @@ mission_code_end
 speech_table .binary "../assets/im/speech_engine.bin", 0, $80     ; -> $0800 at start
 lift_panel  .binary "../assets/im/lift_panel.bin"       ; 400 chars, 400 colours
 zap_blocks  .binary "../assets/im/icon_sprites.bin", 4 * 64, 4 * 64   ; the bolt: blocks $14-$17
+res_nothing .binary "../assets/im/search_nothing.bin"   ; 32 layout + 18 characters
+res_find    .binary "../build/search_find.bin"
 lift_spr_stash .binary "../assets/im/lift_sprites.bin"
 term_spr_stash .binary "../assets/im/terminal_sprites.bin"
 lift_inner  .binary "../assets/im/lift_inner.bin"       ; 15 x 6 chars, 15 x 6 colours
@@ -1492,6 +1507,7 @@ corr_right  .binary "../assets/im/corr_right.bin"
 ; --- mission part 2 and its data ------------------------------------------------
             .include "mission_rooms.asm"
             .include "mission_danger.asm"
+            .include "mission_map.asm"
             .include "../build/mission_rooms.inc"
             .cerror * > $d000, "mission part 2 beyond $cfff"
 

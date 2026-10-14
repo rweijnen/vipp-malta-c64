@@ -65,6 +65,7 @@ def main():
     agent = ([signed(v) for v in dx[3]], [signed(v) for v in dy[3]])
     room_robots = gen_rooms()
     gen_terminals()
+    gen_search_find()
     gen_script(room_robots, agent)
 
 
@@ -211,6 +212,63 @@ def gen_terminals():
     (ROOT / "build" / "mission_term.inc").write_text("".join(out))
     (ROOT / "build" / "charset_lift_vipp.bin").write_bytes(terminals.charset())
     print(f"mission: {len(screens)} terminals")
+
+
+# --- searching: what is found --------------------------------------------------------------
+# The original's result box ("Nothing here.", extract_search.py): 8 x 4 room
+# characters, solid ($52) where empty, the text cut out of the white in a
+# small font, characters $00-$11 (the only ones the rooms leave free). The
+# VIPP find is drawn the same way, in the same style (2 pixel strokes).
+FIND_TEXT = ["VIPP 10", "found!"]
+FIND_FONT = {
+    "V": ["##..##", "##..##", "##..##", "##..##", "##..##", ".####.", "..##.."],
+    "I": ["##", "##", "##", "##", "##", "##", "##"],
+    "P": ["#####.", "##..##", "##..##", "#####.", "##....", "##....", "##...."],
+    "1": [".##", "###", ".##", ".##", ".##", ".##", ".##"],
+    "0": [".####.", "##..##", "##.###", "###.##", "##..##", "##..##", ".####."],
+    "f": ["..###", ".##..", "####.", ".##..", ".##..", ".##..", ".##.."],
+    "o": ["", "", ".####.", "##..##", "##..##", "##..##", ".####."],
+    "u": ["", "", "##..##", "##..##", "##..##", "##..##", ".#####"],
+    "n": ["", "", "#####.", "##..##", "##..##", "##..##", "##..##"],
+    "d": ["....##", "....##", ".#####", "##..##", "##..##", "##..##", ".#####"],
+    "!": ["##", "##", "##", "##", "##", "..", "##"],
+    " ": ["...", "...", "...", "...", "...", "...", "..."],
+}
+FIND_LINES_Y = (9, 19)              # top pixel row of each text line (as "Nothing here.")
+
+
+def gen_search_find():
+    nothing = (IM / "search_nothing.bin").read_bytes()
+    if len(nothing) != 32 + 18 * 8:
+        sys.exit("search_nothing.bin: expected 32 layout bytes + 18 characters: run tools/im/extract_search.py")
+    # 64 x 32 pixels, 1 = white (ink), the text cut out
+    px = [[1] * 64 for _ in range(32)]
+    for line, y0 in zip(FIND_TEXT, FIND_LINES_Y):
+        glyphs = [FIND_FONT[ch] for ch in line]
+        widths = [max(len(row) for row in g) for g in glyphs]
+        width = sum(w + 1 for w in widths) - 1
+        x = (64 - width) // 2
+        for g, w in zip(glyphs, widths):
+            for r, row in enumerate(g):
+                for k, c in enumerate(row):
+                    if c == "#":
+                        px[y0 + r][x + k] = 0
+            x += w + 1
+    layout, chars = [], []
+    for cr in range(4):
+        for cc in range(8):
+            cell = bytes(sum(px[cr * 8 + y][cc * 8 + b] << (7 - b) for b in range(8)) for y in range(8))
+            if cell == b"\xff" * 8:
+                layout.append(0x52)
+            else:
+                if cell not in chars:
+                    chars.append(cell)
+                layout.append(chars.index(cell))
+    if len(chars) > 18:
+        sys.exit(f"search find box needs {len(chars)} characters, only $00-$11 are free")
+    out = bytes(layout) + b"".join(chars) + bytes(8 * (18 - len(chars)))
+    (ROOT / "build" / "search_find.bin").write_bytes(out)
+    print(f"mission: search find box '{' / '.join(FIND_TEXT)}' ({len(chars)} characters)")
 
 
 # --- the script ------------------------------------------------------------------------

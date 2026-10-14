@@ -21,6 +21,9 @@ search_len  = $4a
 box_pos     = $4b               ; 2: screen address of the box's top left
 box_tmp     = $4d
 up_val      = $4e
+search_phase = $4f              ; 0 the bar runs, 1 the result is shown
+search_res  = $67               ; result: 0 "Nothing here.", 1 the VIPP find
+RESULT_TICKS = 30
 
 ROBOT_PTR   = (M_ROBOTSPR & $3fff) / 64
 TERMSPR_PTR = (M_TERMSPR & $3fff) / 64
@@ -420,6 +423,8 @@ SEARCH_BAR_PX = 64
 search_start
             sta search_len
             sta search_left
+            lda #0
+            sta search_phase
             ldx #127            ; the box's characters, bar full
 -           lda search_box,x
             sta M_CHARSET,x
@@ -542,8 +547,20 @@ box_chars   .byte $52, $52, $52, $52, $52, $52, $52, $52
             .byte $52, $52, $52, $52, $52, $52, $52, $52
 box_save    .fill 64
 
-; one tick of searching: the bar, the tick sound; C = 1 when done
-search_tick lda search_left
+; one tick of searching: the bar, the tick sound, then the result for a
+; while; C = 1 when done
+search_tick lda search_phase
+            beq _bar
+            dec search_left     ; the result is shown
+            bne +
+            jsr box_remove
+            lda #0
+            sta search_phase
+            sec
+            rts
++           clc
+            rts
+_bar        lda search_left
             and #1              ; tick on, tick off
             beq +
             lda #$41
@@ -583,8 +600,48 @@ search_tick lda search_left
             rts
 _done       lda #$80
             sta $d412
-            jsr box_remove
-            sec
+            jsr show_result
+            lda #RESULT_TICKS
+            sta search_left
+            inc search_phase
+            clc
+            rts
+
+; The result in the box: its 8 x 4 screen codes and characters $00-$11
+; (the original's "Nothing here.", or the VIPP find in the same style).
+show_result lda search_res
+            beq +
+            lda #<res_find
+            ldx #>res_find
+            bne ++
++           lda #<res_nothing
+            ldx #>res_nothing
++           sta m_p
+            stx m_p + 1
+            ldy #32             ; the characters
+-           lda (m_p),y
+            sta M_CHARSET - 32,y
+            iny
+            cpy #32 + 18 * 8
+            bne -
+            ldx #0              ; the layout
+            ldy #0
+_row        jsr box_row_ptr
+            sty box_tmp
+            txa
+            tay
+            lda (m_p),y
+            ldy box_tmp
+            sta (up_dst),y
+            lda #1
+            sta (up_src),y
+            inx
+            iny
+            cpy #8
+            bne _row
+            ldy #0
+            cpx #32
+            bne _row
             rts
 
 ; the bar (pixel rows 5-7 of chars 8-15): A pixels empty from the left

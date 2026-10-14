@@ -62,9 +62,9 @@ SCRIPT = [
     ("ONDEATH", "room23_out"),
     ("STAND", 40),                      # the robot comes and fires: out of reach
     ("FLIP",),                          # over it while it cools down
-    ("RUN", 174), ("SEARCH", 40), ("STAND", 6),     # the candy machine
-    ("FACE", L), ("STAND", 32),         # it comes back: over it again
-    ("FLIP",),
+    ("RUN", 174), ("SEARCH", 24, 1),    # the candy machine: the VIPP find
+    ("STAND", 23),                      # it comes back (safe: 17-30 ticks)
+    ("FACE", L), ("FLIP",),             # over it again
     ("RUN", 59), ("STAND", 6),
     ("TERM", 2), ("STAND", 80), ("BACK",),
     ("STAND", 6),
@@ -123,7 +123,9 @@ def emit():
             out.append(f"            .byte C_{op}\n")
         elif op == "FACE":
             out.append(f"            .byte C_FACE, {c[1]}\n")
-        elif op in ("STAND", "SAY", "TERM", "SEARCH", "RIDE"):
+        elif op == "SEARCH":
+            out.append(f"            .byte C_SEARCH, {c[1]}, {c[2]}\n")
+        elif op in ("STAND", "SAY", "TERM", "RIDE"):
             out.append(f"            .byte C_{op}, {c[1]}\n")
         else:
             sys.exit(f"mission script: unknown command {c}")
@@ -132,6 +134,7 @@ def emit():
 
 # --- simulation (mirrors src/mission.asm, mission_rooms.asm, mission_danger.asm) ---------
 ROBOT_PAUSE, ZAP_TICKS, ZAP_COOL, ZAP_RANGE = 8, 16, 30, 56
+RESULT_TICKS = 30
 FLIP_DX, RUN_PX = 76, 5
 
 
@@ -273,8 +276,8 @@ class Sim:
                 self.frame = 27
                 self.pc += 1
                 return
-            elif op == "SEARCH":
-                self.left, self.frame = c[1], 15
+            elif op == "SEARCH":                      # the bar, then the result
+                self.left, self.frame = c[1] + RESULT_TICKS, 15
                 self.pc += 1
                 return
             else:                                     # leaving the room
