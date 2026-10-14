@@ -44,6 +44,8 @@ The GIFs are recorded in VICE with `tools/vicegif.py`.
 
 The machine must be in **PAL** mode. On an NTSC machine the demo shows a message and stops.
 
+**SPACE switches between the two modes:** the demo starts with the bouncing VIPP logo and the scroller; press **SPACE** for the VIPP Mission (it plays by itself and loops), press **SPACE** again to go back to the demo (the music starts from the beginning). This works at any moment, also during the speech.
+
 ## Build
 
 `.\build.ps1` runs `tools\gen_assets.py`, assembles `src\main.asm` with 64tass and writes `build\vipp.prg` and `build\vipp.d64`.
